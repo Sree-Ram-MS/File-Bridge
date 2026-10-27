@@ -15,30 +15,20 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - uses: subosito/flutter-action@v2
+      - uses: gradle/actions/setup-gradle@v4
         with:
-          channel: stable
-          cache: true
-      - name: Prepare project
+          gradle-version: "8.11.1"
+      - name: Export web UI
         run: |
           python3 tools/export_web.py
-          pip install pillow
-          cd flutter_app
-          flutter create --org com.sreeram --project-name filebridge --platforms android . 2>&1 | tee -a $GITHUB_WORKSPACE/build.log
-          rm -rf test
-          python3 tool/setup_android.py | tee -a $GITHUB_WORKSPACE/build.log
-          flutter pub get 2>&1 | tee -a $GITHUB_WORKSPACE/build.log
-          echo "VER=$(python3 -c 'import sys;sys.path.insert(0,"..");import filebridge;print(filebridge.VERSION)')" >> $GITHUB_ENV
-      - name: Analyze
-        working-directory: flutter_app
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings 2>&1 | tee -a $GITHUB_WORKSPACE/build.log
+          echo "VER=$(python3 -c 'import filebridge;print(filebridge.VERSION)')" >> $GITHUB_ENV
       - name: Build APK
-        working-directory: flutter_app
+        run: gradle -p android assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
+      - name: Collect APK
         run: |
-          flutter build apk --release 2>&1 | tee -a $GITHUB_WORKSPACE/build.log
-          mkdir -p $GITHUB_WORKSPACE/dist
-          cp build/app/outputs/flutter-apk/app-release.apk $GITHUB_WORKSPACE/dist/FileBridge-${{ env.VER }}-android.apk
-          ls -la $GITHUB_WORKSPACE/dist
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk dist/FileBridge-${VER}-android.apk
+          ls -la dist
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VER }}
@@ -48,5 +38,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          { echo '```'; grep -n -i -E "error|exception|failed|what went wrong" build.log | tail -n 80; echo '```'; echo; echo '<details><summary>Log tail</summary>'; echo; echo '```'; tail -n 150 build.log; echo '```'; echo '</details>'; } > report.md || echo "no log" > report.md
-          gh issue create --repo "${{ github.repository }}" --title "Android build failed (${GITHUB_SHA::7})" --body-file report.md --label ci-failure || gh issue create --repo "${{ github.repository }}" --title "Android build failed (${GITHUB_SHA::7})" --body-file report.md
+          { echo '```'; grep -n -E "error:|ERROR|FAILURE|What went wrong|Exception" build.log | head -n 60; echo '```'; echo; echo '<details><summary>Log tail</summary>'; echo; echo '```'; tail -n 120 build.log; echo '```'; echo '</details>'; } > report.md 2>/dev/null || echo "no log" > report.md
+          gh issue create --repo "${{ github.repository }}" --title "Android build failed (${GITHUB_SHA::7})" --body-file report.md

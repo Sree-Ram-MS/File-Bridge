@@ -1,0 +1,105 @@
+<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>FileBridge Dashboard</title><style>
+:root{--bg:#0e1015;--panel:#161920;--panel2:#1d212a;--line:#2a2f3b;--text:#e9ebf1;--muted:#8a92a6;--accent:#6b8bff;--accent2:#5272f5;--ok:#36c98a;--warn:#f2a93b;--err:#f0505f;--r:14px}
+@media (prefers-color-scheme:light){:root{--bg:#f4f5f9;--panel:#fff;--panel2:#eef0f5;--line:#dfe2ea;--text:#151821;--muted:#666f84}}
+*{box-sizing:border-box}[hidden]{display:none!important}
+html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,sans-serif}
+a{color:var(--accent);text-decoration:none}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--text);padding:8px 14px;border-radius:10px;transition:border-color .15s,background .15s;white-space:nowrap}
+button:hover{border-color:var(--accent)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}.btn-primary:hover{background:var(--accent2)}
+.btn-danger{color:var(--err)}.btn-danger-fill{background:var(--err);border-color:var(--err);color:#fff}
+.btn-ghost{background:transparent;border-color:transparent}.btn-ghost:hover{background:var(--panel2)}
+input,select{font:inherit;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:8px 12px;outline:none;min-width:0}
+input:focus,select:focus{border-color:var(--accent)}
+.topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:12px;padding:12px 20px;background:var(--bg);border-bottom:1px solid var(--line)}
+.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:16px;letter-spacing:.2px}
+.logo i{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#6b8bff,#a66bff);display:grid;place-items:center;color:#fff;font-style:normal}
+.chip{padding:3px 10px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);color:var(--muted);font-size:12px;white-space:nowrap}
+.chip.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,var(--line))}
+.spacer{flex:1}.muted{color:var(--muted)}.full{width:100%}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:20px}
+.center{min-height:100vh;display:grid;place-items:center;padding:20px}
+.row-end{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:grid;place-items:center;z-index:60;padding:16px}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;width:min(420px,100%)}
+.modal h3{margin:0 0 8px;font-size:17px}.modal input{margin-top:8px}
+#toasts{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:90}
+.toast{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--ok);padding:10px 16px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.3);animation:up .2s}
+.toast.err{border-left-color:var(--err)}
+@keyframes up{from{transform:translateY(10px);opacity:0}}
+.spin{width:18px;height:18px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp 0.8s linear infinite;display:inline-block;vertical-align:middle}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+.wrap{max-width:980px;margin:0 auto;padding:24px 20px 60px;display:grid;gap:16px}
+.hero{display:grid;grid-template-columns:1.3fr 1fr;gap:16px}
+@media (max-width:760px){.hero{grid-template-columns:1fr}}
+h2{margin:0 0 4px;font-size:15px}.sub{color:var(--muted);font-size:13px;margin:0 0 14px}
+.url{display:flex;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:8px}
+.url code{flex:1;font:600 22px/1.2 ui-monospace,Menlo,Consolas,monospace;color:var(--accent);word-break:break-all}
+.kv{display:flex;gap:8px;align-items:center;margin-top:8px}.kv input{flex:1}
+.list .it{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--line);flex-wrap:wrap}.list .it:first-child{border-top:0}
+.av{width:38px;height:38px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;font-weight:700;color:var(--accent);flex:none;position:relative}
+.dot{position:absolute;right:0;bottom:0;width:11px;height:11px;border-radius:50%;border:2px solid var(--panel);background:var(--muted)}.dot.on{background:var(--ok)}
+.who{flex:1;min-width:150px}.who b{display:block}.who span{color:var(--muted);font-size:12px}
+.req{background:color-mix(in srgb,var(--warn) 10%,var(--panel));border-color:color-mix(in srgb,var(--warn) 45%,var(--line))}
+.badge{background:var(--warn);color:#111;border-radius:999px;padding:0 8px;font-size:12px;font-weight:700;margin-left:6px}
+.empty{color:var(--muted);padding:6px 0}
+</style></head><body><div class="topbar"><div class="logo"><i>&#8644;</i>FileBridge</div><span class="chip ok">&#9679; Sharing on</span><span class="spacer"></span><a href="/"><button class="btn-primary">Open my files</button></a></div>
+<div class="wrap">
+<div class="hero">
+ <div class="card"><h2>Connect from another device</h2><p class="sub">On the same Wi-Fi or office network, open this address in any browser (Android, Windows, Ubuntu, iPhone).</p>
+  <div id="urls"></div><p class="muted" style="margin:6px 0 0;font-size:12px">Device name <b id="host"></b> · port <b id="port"></b></p></div>
+ <div class="card"><h2>Shared folder</h2><p class="sub">Approved devices only see what's inside this folder.</p>
+  <div class="kv"><input id="root" spellcheck="false"><button id="setroot">Change</button></div>
+  <h2 style="margin-top:20px">Open someone else's files</h2><p class="sub">If a colleague is running FileBridge too, enter their address.</p>
+  <div class="kv"><input id="peer" placeholder="192.168.1.20:8000"><button id="goPeer" class="btn-primary">Connect</button></div></div>
+</div>
+<div class="card req" id="reqcard" hidden><h2>Access requests<span class="badge" id="reqn"></span></h2><p class="sub">Choose what each device may do, then approve.</p><div class="list" id="pending"></div></div>
+<div class="card"><h2>Approved devices</h2><p class="sub">Change access or remove a device at any time. Changes apply instantly.</p><div class="list" id="devices"></div></div>
+<p class="muted" style="text-align:center;font-size:12px" id="foot"></p>
+</div><div id='toasts'></div><script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(url,opts={}){opts.headers=Object.assign({'X-FB':'1'},opts.headers||{});const r=await fetch(url,opts);let j={};try{j=await r.json()}catch(_){}if(r.status===401&&!url.includes('request')){location.href='/';throw new Error('Not connected')}if(!r.ok)throw new Error(j.error||r.statusText);return j}
+const post=(u,b)=>api(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+function toast(msg,type){const t=document.createElement('div');t.className='toast '+(type||'');t.textContent=msg;$('#toasts').appendChild(t);setTimeout(()=>t.remove(),3200)}
+function copy(text){const ok=()=>toast('Copied: '+text);if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(text).then(ok);return}const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();try{document.execCommand('copy');ok()}catch(_){prompt('Copy this:',text)}ta.remove()}
+function fmtSize(n){if(n<1024)return n+' B';const u=['KB','MB','GB','TB'];let i=-1;do{n/=1024;i++}while(n>=1024&&i<u.length-1);return n.toFixed(n<10?1:0)+' '+u[i]}
+function fmtDate(t){const d=new Date(t*1000);return d.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})+', '+d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'})}
+function ago(t){const s=Math.max(0,Date.now()/1000-t);if(s<60)return 'just now';if(s<3600)return Math.floor(s/60)+' min ago';if(s<86400)return Math.floor(s/3600)+' h ago';return Math.floor(s/86400)+' d ago'}
+function dialog(o){return new Promise(res=>{const bg=document.createElement('div');bg.className='modal-bg';const hasIn=o.input!==undefined;bg.innerHTML=`<div class="modal"><h3>${esc(o.title)}</h3>${o.text?`<p class="muted">${esc(o.text)}</p>`:''}${hasIn?`<input class="full" value="${esc(o.input)}" placeholder="${esc(o.placeholder||'')}">`:''}<div class="row-end"><button class="cancel">Cancel</button><button class="okb ${o.danger?'btn-danger-fill':'btn-primary'}">${esc(o.ok||'OK')}</button></div></div>`;document.body.appendChild(bg);const inp=bg.querySelector('input');const done=v=>{bg.remove();res(v)};bg.querySelector('.cancel').onclick=()=>done(null);bg.querySelector('.okb').onclick=()=>done(inp?inp.value.trim():true);bg.onclick=e=>{if(e.target===bg)done(null)};if(inp){inp.focus();const d=o.input.lastIndexOf('.');inp.setSelectionRange(0,d>0?d:o.input.length);inp.onkeydown=e=>{if(e.key==='Enter')done(inp.value.trim());if(e.key==='Escape')done(null)}}})}
+
+let S=null,sigP='',sigD='',seen=new Set(),first=true;
+const PL={read:'View & download',upload:'View & upload',full:'Full access'};
+const sel=(v,attr)=>`<select ${attr}>${Object.entries(PL).map(([k,l])=>`<option value="${k}"${k===v?' selected':''}>${l}</option>`).join('')}</select>`;
+const initial=n=>esc((n||'?').trim().charAt(0).toUpperCase());
+const dev=ua=>/Android/i.test(ua)?'Android':/iPhone|iPad/i.test(ua)?'iOS':/Windows/i.test(ua)?'Windows':/Mac OS/i.test(ua)?'macOS':/Linux/i.test(ua)?'Linux':'Browser';
+async function refresh(){try{S=await api('/api/admin/state');draw();$('#foot').textContent='FileBridge '+S.version}catch(e){$('#foot').textContent='Lost connection to FileBridge. Is it still running?'}}
+function draw(){
+  $('#host').textContent=S.hostname;$('#port').textContent=S.port;
+  const urls=S.ips.map(ip=>`http://${ip}:${S.port}`);
+  const uh=urls.length?urls.map(u=>`<div class="url"><code>${esc(u)}</code><button data-copy="${esc(u)}">Copy</button></div>`).join(''):'<div class="url"><code style="color:var(--warn);font-size:15px">No network found. Connect to Wi-Fi or LAN.</code></div>';
+  if($('#urls').dataset.h!==uh){$('#urls').innerHTML=uh;$('#urls').dataset.h=uh}
+  if(document.activeElement!==$('#root'))$('#root').value=S.root;
+  const sp=JSON.stringify(S.pending.map(r=>[r.id,r.name]));
+  if(sp!==sigP){sigP=sp;$('#reqcard').hidden=!S.pending.length;$('#reqn').textContent=S.pending.length;
+    $('#pending').innerHTML=S.pending.map(r=>`<div class="it"><div class="av">${initial(r.name)}</div><div class="who"><b>${esc(r.name)}</b><span>${esc(r.ip)} · ${dev(r.ua)} · asked ${ago(r.time)}</span></div>${sel('read',`id="p_${r.id}"`)}<button class="btn-primary" data-ok="${r.id}">Approve</button><button class="btn-danger" data-no="${r.id}">Deny</button></div>`).join('');
+    for(const r of S.pending)if(!seen.has(r.id)){seen.add(r.id);if(!first&&window.Notification&&Notification.permission==='granted')new Notification('FileBridge: access request',{body:r.name+' ('+r.ip+') wants to connect'})}}
+  const sd=JSON.stringify(S.devices.map(d=>[d.id,d.name,d.perm,d.online,d.ip]));
+  if(sd!==sigD){sigD=sd;$('#devices').innerHTML=S.devices.length?S.devices.map(d=>`<div class="it"><div class="av">${initial(d.name)}<i class="dot ${d.online?'on':''}"></i></div><div class="who"><b>${esc(d.name)}</b><span>${esc(d.ip)} · ${d.online?'online now':'last seen '+ago(d.last_seen)}</span></div>${sel(d.perm,`data-perm="${d.id}"`)}<button class="btn-danger" data-rm="${d.id}">Remove</button></div>`).join(''):'<div class="empty">No devices yet. Share your address and approve requests as they come in.</div>'}
+  document.title=(S.pending.length?`(${S.pending.length}) `:'')+'FileBridge Dashboard';first=false;
+}
+document.addEventListener('click',async e=>{const t=e.target;try{
+  if(t.dataset.copy)copy(t.dataset.copy);
+  if(t.dataset.ok){await post('/api/admin/approve',{id:t.dataset.ok,perm:$('#p_'+t.dataset.ok).value});toast('Approved');sigP='';refresh()}
+  if(t.dataset.no){await post('/api/admin/deny',{id:t.dataset.no});sigP='';refresh()}
+  if(t.dataset.rm){if(!await dialog({title:'Remove this device?',text:'It loses access immediately and must request again.',ok:'Remove',danger:true}))return;await post('/api/admin/revoke',{id:t.dataset.rm});toast('Removed');refresh()}
+}catch(err){toast(err.message,'err')}});
+document.addEventListener('change',async e=>{const id=e.target.dataset&&e.target.dataset.perm;if(!id)return;try{await post('/api/admin/set-perm',{id,perm:e.target.value});toast('Access updated');refresh()}catch(err){toast(err.message,'err')}});
+$('#setroot').onclick=async()=>{try{await post('/api/admin/set-root',{path:$('#root').value});$('#root').blur();toast('Now sharing '+$('#root').value);refresh()}catch(e){toast(e.message,'err')}};
+$('#root').onkeydown=e=>{if(e.key==='Enter')$('#setroot').click()};
+$('#goPeer').onclick=()=>{let v=$('#peer').value.trim();if(!v)return;if(!/^https?:\/\//.test(v))v='http://'+v;if(!/:\d+(\/|$)/.test(v.replace(/^https?:\/\//,'')))v=v.replace(/\/?$/,'')+':8000';window.open(v,'_blank')};
+$('#peer').onkeydown=e=>{if(e.key==='Enter')$('#goPeer').click()};
+if(window.Notification&&Notification.permission==='default')document.addEventListener('click',()=>Notification.requestPermission(),{once:true});
+refresh();setInterval(refresh,2000);
+</script></body></html>

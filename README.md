@@ -18,7 +18,7 @@ Get the latest build from **Releases**:
 | Windows 10/11 | `FileBridge-<version>-windows-x64.exe` | Double-click. Allow it on *Private networks* at the firewall prompt. |
 | Ubuntu / Debian | `filebridge_<version>_all.deb` | `sudo apt install ./filebridge_<version>_all.deb`, then open **FileBridge** from the app menu or run `filebridge`. |
 | Any OS with Python 3.8+ | `FileBridge-<version>-portable.zip` | `python3 filebridge.py ~/Downloads` |
-| Android (to share from the phone) | `FileBridge-<version>-android.apk` | Install, allow *All files access*, keep the app open while sharing. |
+| Android (to share from the phone) | `FileBridge-<version>-android.apk` | Install, allow *All files access* and notifications. Sharing keeps running in the background until you tap *Stop sharing*. |
 | Any browser (to connect) | nothing to install | Open the address shown on the sharing device. |
 
 ## Branches
@@ -28,7 +28,7 @@ Get the latest build from **Releases**:
 | `main` | Core app (`filebridge.py`, pure Python stdlib, no dependencies), tests, portable release |
 | `ubuntu` | Debian/Ubuntu packaging (`.deb`, app-menu entry, icon) and its CI build |
 | `windows` | Windows packaging (PyInstaller `.exe`) and its CI build |
-| `android` | Android host app (Flutter, in `flutter_app/`) and its CI build |
+| `android` | Android host app (plain Java, in `android/`) and its CI build |
 
 Platform branches build automatically on push with GitHub Actions and attach their package to the release `v<version>`.
 
@@ -50,4 +50,17 @@ The dashboard opens at `http://localhost:8000/admin`. Approved devices are remem
 
 ## Android app (this branch)
 
-The Flutter app in `flutter_app/` hosts FileBridge on a phone with the same API and web explorer, so desktop and phone users connect the same way. See `flutter_app/README.md` to build it. Pushing to `android` builds the APK in GitHub Actions and attaches it to the release.
+`android/` is a small plain-Java app (no Flutter, no AndroidX). It runs the FileBridge server in a
+foreground service, so sharing continues with the screen off, and shows the same owner dashboard
+as the desktop in a WebView, plus a native folder picker, Share address and Stop sharing buttons.
+Access requests arrive as notifications.
+
+Build locally (JDK 17 + Android SDK):
+
+```bash
+python3 tools/export_web.py          # copy the web UI from filebridge.py into the app assets
+gradle -p android assembleRelease    # android/app/build/outputs/apk/release/app-release.apk
+```
+
+Pushing to `android` builds the APK in GitHub Actions and attaches it to the release.
+The APK is signed with a debug key, so installing a newer build may need uninstalling the old one first.
