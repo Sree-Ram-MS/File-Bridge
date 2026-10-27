@@ -15,15 +15,22 @@ jobs:
           python-version: "3.12"
       - name: Test
         run: python tests/test_api.py
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pyinstaller
       - name: Build exe
+        run: python -m PyInstaller --noconfirm --onefile --console --name FileBridge --icon assets\icon.ico --version-file packaging\windows\version_info.txt filebridge.py
+      - name: Rename
         shell: pwsh
         run: |
-          python -m pip install --upgrade pyinstaller
-          python -m PyInstaller --noconfirm --onefile --console --name FileBridge --icon assets\icon.ico --version-file packaging\windows\version_info.txt filebridge.py
-          $ver = python -c "import filebridge;print(filebridge.VERSION)"
-          Rename-Item dist\FileBridge.exe "FileBridge-$ver-windows-x64.exe"
-          "VER=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          dist\FileBridge-$ver-windows-x64.exe --version
+          $ver = (python -c "import filebridge;print(filebridge.VERSION)").Trim()
+          Move-Item -Path "dist\FileBridge.exe" -Destination "dist\FileBridge-$ver-windows-x64.exe"
+          Add-Content -Path $env:GITHUB_ENV -Value "VER=$ver"
+          Get-ChildItem dist
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          & ".\dist\FileBridge-$env:VER-windows-x64.exe" --version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VER }}
