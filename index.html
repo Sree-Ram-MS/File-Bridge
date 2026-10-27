@@ -1,0 +1,801 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FileBridge: share folders on your network, with permission</title>
+<meta name="description" content="FileBridge shares folders over your local network with a real file explorer. Every device asks first, and you decide what it can do. Windows, Ubuntu, Android and any browser.">
+<meta name="theme-color" content="#0b0d12">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236b8bff'/%3E%3Cstop offset='1' stop-color='%23a66bff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='16' fill='url(%23g)'/%3E%3Cpath d='M18 26h22l-6-6M46 38H24l6 6' stroke='white' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#0b0d12;--bg2:#10131a;--panel:#151922;--panel2:#1b2030;--line:#262c3b;--line2:#323a4d;
+  --text:#eceef4;--muted:#8e96aa;--dim:#646c80;
+  --a1:#6b8bff;--a2:#a66bff;--ok:#36c98a;--warn:#f2a93b;--err:#f0505f;
+  --grad:linear-gradient(135deg,var(--a1),var(--a2));
+  --r:18px;--max:1160px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,"Helvetica Neue",sans-serif;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+a{color:inherit;text-decoration:none}
+img{max-width:100%}
+code,kbd,.mono{font-family:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace}
+.wrap{max-width:var(--max);margin:0 auto;padding:0 24px}
+.skip{position:absolute;left:-999px;top:8px;background:var(--a1);color:#fff;padding:8px 14px;border-radius:8px;z-index:99}
+.skip:focus{left:8px}
+
+/* ---------- nav */
+header.nav{position:sticky;top:0;z-index:50;backdrop-filter:saturate(1.4) blur(14px);-webkit-backdrop-filter:saturate(1.4) blur(14px);background:rgba(11,13,18,.72);border-bottom:1px solid rgba(255,255,255,.06)}
+.nav .wrap{display:flex;align-items:center;gap:28px;height:64px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:750;font-size:18px;letter-spacing:-.01em}
+.logo{width:32px;height:32px;border-radius:10px;background:var(--grad);display:grid;place-items:center;box-shadow:0 6px 20px -6px rgba(107,139,255,.7)}
+.logo svg{width:18px;height:18px}
+.nav nav{display:flex;gap:22px;font-size:14.5px;color:var(--muted)}
+.nav nav a:hover{color:var(--text)}
+.nav .sp{flex:1}
+.btn{display:inline-flex;align-items:center;gap:8px;border-radius:12px;padding:10px 18px;font-weight:600;font-size:15px;border:1px solid var(--line2);background:var(--panel);color:var(--text);transition:transform .15s,border-color .15s,background .15s;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--a1);transform:translateY(-1px)}
+.btn svg{width:18px;height:18px}
+.btn-p{background:var(--grad);border-color:transparent;color:#fff;box-shadow:0 10px 30px -10px rgba(122,120,255,.8)}
+.btn-p:hover{border-color:transparent;filter:brightness(1.08)}
+.btn-sm{padding:8px 14px;font-size:14px;border-radius:10px}
+.menu-btn{display:none;background:none;border:0;color:var(--text);padding:6px;cursor:pointer}
+
+/* ---------- hero */
+.hero{position:relative;padding:84px 0 40px;text-align:center}
+.hero:before{content:"";position:absolute;inset:-200px 0 auto;height:720px;background:radial-gradient(600px 340px at 30% 30%,rgba(107,139,255,.22),transparent 70%),radial-gradient(520px 320px at 72% 22%,rgba(166,107,255,.18),transparent 70%);pointer-events:none;z-index:-1}
+.pill{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--muted);border:1px solid var(--line);background:rgba(21,25,34,.7);padding:6px 14px 6px 8px;border-radius:999px}
+.pill b{background:var(--grad);color:#fff;font-size:12px;padding:2px 9px;border-radius:999px;font-weight:650}
+.pill:hover{border-color:var(--line2);color:var(--text)}
+h1{font-size:clamp(40px,6.4vw,76px);line-height:1.02;letter-spacing:-.035em;margin:22px auto 18px;max-width:900px;font-weight:800}
+h1 em{font-style:normal;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lead{font-size:clamp(17px,2vw,20px);color:var(--muted);max-width:640px;margin:0 auto 30px}
+.cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.stats{display:flex;justify-content:center;gap:36px;margin:34px 0 0;padding:0;list-style:none;color:var(--muted);font-size:14.5px;flex-wrap:wrap}
+.stats b{display:block;color:var(--text);font-size:24px;font-weight:750;letter-spacing:-.02em}
+
+/* ---------- mockups */
+.stage{position:relative;margin:56px auto 0;max-width:1040px;height:540px}
+.win{position:absolute;left:0;top:0;width:78%;background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 40px 100px -30px rgba(0,0,0,.8),0 0 0 1px rgba(255,255,255,.02)}
+.bar{display:flex;align-items:center;gap:8px;padding:11px 14px;background:var(--bg2);border-bottom:1px solid var(--line)}
+.dots{display:flex;gap:6px}.dots i{width:11px;height:11px;border-radius:50%;background:#3a4152;display:block}
+.dots i:nth-child(1){background:#f0605f}.dots i:nth-child(2){background:#f2b33b}.dots i:nth-child(3){background:#36c98a}
+.url{flex:1;margin:0 40px;background:var(--panel);border:1px solid var(--line);border-radius:8px;font-size:12.5px;color:var(--muted);padding:5px 12px;text-align:left}
+.url b{color:var(--text);font-weight:500}
+.ex-top{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line);font-size:13px}
+.crumb{color:var(--muted)}.crumb b{color:var(--text);font-weight:600}
+.ex-top .sp{flex:1}
+.chip{font-size:11.5px;border:1px solid var(--line2);border-radius:999px;padding:3px 10px;color:var(--muted)}
+.chip.ok{color:var(--ok);border-color:rgba(54,201,138,.35);background:rgba(54,201,138,.08)}
+.fake-in{width:150px;height:28px;border-radius:8px;background:var(--panel2);border:1px solid var(--line)}
+.fake-btn{height:28px;padding:0 12px;border-radius:8px;background:var(--grad);color:#fff;font-size:12px;display:flex;align-items:center;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;padding:16px}
+.tile{background:var(--panel2);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:11.5px;text-align:left}
+.tile .th{height:74px;display:grid;place-items:center}
+.tile .nm{padding:7px 9px 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+.tile .sz{padding:0 9px 8px;color:var(--dim);font-size:10.5px}
+.th.f{background:linear-gradient(160deg,#2a2f22,#1f2330)}
+.th.i1{background:linear-gradient(135deg,#ff9a6b,#ff5f8a 50%,#7a5cff)}
+.th.i2{background:linear-gradient(160deg,#4fd1c5,#2b6cb0)}
+.th.i3{background:linear-gradient(200deg,#f6d365,#fda085)}
+.th.v{background:linear-gradient(160deg,#1b1f2c,#2c2140)}
+.th.p{background:linear-gradient(160deg,#3a1f24,#24181c)}
+.th.z{background:linear-gradient(160deg,#1f2a24,#18201c)}
+.th svg{width:30px;height:30px}
+.upl{margin:0 16px 16px;border:1.5px dashed var(--line2);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px;font-size:12.5px;color:var(--muted);text-align:left}
+.prog{flex:1;height:6px;background:var(--panel2);border-radius:9px;overflow:hidden}
+.prog i{display:block;height:100%;width:68%;background:var(--grad);border-radius:9px;animation:load 3.2s ease-in-out infinite}
+@keyframes load{0%{width:8%}70%{width:92%}100%{width:100%}}
+
+.phone{position:absolute;right:0;top:70px;width:270px;height:540px;background:#07080b;border-radius:40px;padding:10px;box-shadow:0 50px 100px -30px rgba(0,0,0,.9),0 0 0 1px #2a2f3c,inset 0 0 0 2px #1a1d25}
+.scr{height:100%;border-radius:31px;background:var(--bg2);overflow:hidden;position:relative;text-align:left}
+.notch{position:absolute;top:8px;left:50%;transform:translateX(-50%);width:84px;height:22px;background:#07080b;border-radius:20px;z-index:2}
+.sb{display:flex;justify-content:space-between;padding:12px 22px 0;font-size:11px;color:var(--muted);font-weight:600}
+.app-h{display:flex;align-items:center;gap:8px;padding:18px 16px 10px;font-weight:700;font-size:15px}
+.app-h .logo{width:24px;height:24px;border-radius:7px}
+.app-h .logo svg{width:13px;height:13px}
+.card{margin:8px 12px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px}
+.card h5{margin:0 0 3px;font-size:12.5px}
+.card p{margin:0;font-size:11px;color:var(--muted);line-height:1.45}
+.addr{margin-top:9px;background:var(--panel2);border-radius:10px;padding:8px 10px;font:700 14px/1.2 ui-monospace,Menlo,monospace;color:var(--a1)}
+.req{border-color:rgba(166,107,255,.45);background:linear-gradient(180deg,rgba(166,107,255,.12),rgba(107,139,255,.05));animation:pulse 2.6s ease-in-out infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(166,107,255,0)}50%{box-shadow:0 0 0 6px rgba(166,107,255,.13)}}
+.who{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+.av{width:30px;height:30px;border-radius:50%;background:var(--grad);display:grid;place-items:center;font-weight:700;font-size:12px;color:#fff;flex:none}
+.sel{font-size:11px;border:1px solid var(--line2);border-radius:8px;padding:5px 8px;color:var(--text);background:var(--panel2);margin-bottom:8px}
+.acts{display:flex;gap:6px}
+.acts span{flex:1;text-align:center;font-size:11.5px;font-weight:650;padding:7px;border-radius:9px;border:1px solid var(--line2)}
+.acts .y{background:var(--grad);color:#fff;border-color:transparent}
+.dev{display:flex;align-items:center;gap:9px;padding:6px 0;font-size:11.5px}
+.dev .av{width:24px;height:24px;font-size:10px;background:#2a3146;position:relative}
+.dev .av:after{content:"";position:absolute;right:-1px;bottom:-1px;width:8px;height:8px;border-radius:50%;background:var(--ok);border:2px solid var(--panel)}
+.dev .t{flex:1}.dev .t small{display:block;color:var(--dim);font-size:10px}
+.dev .chip{font-size:9.5px;padding:2px 7px}
+
+/* ---------- sections */
+section{padding:96px 0}
+.kicker{color:var(--a1);font-weight:650;font-size:13.5px;letter-spacing:.08em;text-transform:uppercase;margin:0 0 12px}
+h2{font-size:clamp(30px,4vw,46px);line-height:1.08;letter-spacing:-.03em;margin:0 0 14px;font-weight:780}
+.sub{color:var(--muted);font-size:18px;max-width:620px;margin:0}
+.center{text-align:center}.center .sub{margin:0 auto}
+.divider{border-top:1px solid rgba(255,255,255,.06)}
+
+/* runs on */
+.runs{padding:56px 0}
+.runs h3{margin:0 0 22px;text-align:center;color:var(--muted);font-weight:600;font-size:15px;letter-spacing:.06em;text-transform:uppercase}
+.plats{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}
+.plat{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px 14px;text-align:center;transition:border-color .15s,transform .15s}
+.plat:hover{border-color:var(--line2);transform:translateY(-2px)}
+.plat svg{width:30px;height:30px;margin-bottom:10px;color:var(--text)}
+.plat b{display:block;font-size:15px}
+.plat small{color:var(--muted);font-size:12.5px}
+
+/* problem / compare */
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:44px}
+.cmp{border-radius:var(--r);padding:26px;border:1px solid var(--line);background:var(--panel)}
+.cmp.new{border-color:rgba(107,139,255,.4);background:linear-gradient(180deg,rgba(107,139,255,.08),rgba(166,107,255,.03)),var(--panel)}
+.cmp h4{margin:0 0 4px;font-size:18px}
+.cmp .cmd{font-size:13px;color:var(--muted);margin-bottom:16px}
+.cmp ul{list-style:none;margin:0;padding:0}
+.cmp li{display:flex;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:15px}
+.cmp li:first-child{border-top:0}
+.cmp li svg{width:18px;height:18px;flex:none;margin-top:3px}
+.x{color:var(--dim)}.x svg{color:var(--err)}
+.y2 svg{color:var(--ok)}
+
+/* how it works */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:48px;counter-reset:s}
+.step{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:28px 24px 24px;counter-increment:s}
+.step:before{content:counter(s);position:absolute;top:-16px;left:24px;width:34px;height:34px;border-radius:11px;background:var(--grad);display:grid;place-items:center;font-weight:800;color:#fff;box-shadow:0 8px 20px -8px rgba(122,120,255,.9)}
+.step h4{margin:10px 0 6px;font-size:19px}
+.step p{margin:0;color:var(--muted);font-size:15px}
+.step .mini{margin-top:18px;background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:12px;font-size:12.5px}
+.mini .addr{margin-top:0;font-size:15px;text-align:center}
+.mini .row{display:flex;align-items:center;gap:8px}
+.mini .in{flex:1;height:30px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);display:flex;align-items:center;padding:0 10px;color:var(--muted)}
+.mini .go{height:30px;padding:0 12px;border-radius:8px;background:var(--grad);display:flex;align-items:center;color:#fff;font-weight:650}
+.flow{margin-top:26px;display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:14px}
+.flow span{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:7px 14px}
+.flow i{font-style:normal;color:var(--dim)}
+
+/* permissions */
+.perms{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:44px}
+.perm{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:26px}
+.perm .ic{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;margin-bottom:16px}
+.perm .ic svg{width:22px;height:22px}
+.perm:nth-child(1) .ic{background:rgba(54,201,138,.12);color:var(--ok)}
+.perm:nth-child(2) .ic{background:rgba(107,139,255,.14);color:var(--a1)}
+.perm:nth-child(3) .ic{background:rgba(242,169,59,.13);color:var(--warn)}
+.perm h4{margin:0 0 6px;font-size:19px}
+.perm p{color:var(--muted);margin:0 0 14px;font-size:15px}
+.perm ul{margin:0;padding:0;list-style:none;font-size:14.5px}
+.perm li{padding:5px 0;display:flex;gap:9px}
+.perm li:before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.5;margin-top:10px;flex:none}
+.note{margin-top:22px;color:var(--muted);font-size:14.5px;text-align:center}
+
+/* features */
+.feats{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:44px}
+.feat{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:24px;transition:border-color .15s}
+.feat:hover{border-color:var(--line2)}
+.feat svg{width:24px;height:24px;color:var(--a1);margin-bottom:14px}
+.feat h4{margin:0 0 6px;font-size:17px}
+.feat p{margin:0;color:var(--muted);font-size:14.5px}
+.feat.big{grid-column:span 2;display:grid;grid-template-columns:1fr 1.1fr;gap:24px;align-items:center}
+.pv{background:var(--bg2);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.pv .img{height:150px;background:linear-gradient(135deg,#ff9a6b,#ff5f8a 45%,#7a5cff);position:relative}
+.pv .img:after{content:"";position:absolute;left:50%;top:50%;width:46px;height:46px;transform:translate(-50%,-50%);border-radius:50%;background:rgba(0,0,0,.35) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M8 5v14l11-7z'/%3E%3C/svg%3E") center/22px no-repeat;backdrop-filter:blur(4px)}
+.pv .ctl{display:flex;align-items:center;gap:10px;padding:10px 12px;font-size:12px;color:var(--muted)}
+.pv .tb{flex:1;height:4px;border-radius:9px;background:var(--panel2);position:relative}
+.pv .tb:before{content:"";position:absolute;inset:0 60% 0 0;background:var(--grad);border-radius:9px}
+
+/* download */
+.tabs{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin:40px auto 22px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:6px;width:max-content;max-width:100%}
+.tab{border:0;background:none;color:var(--muted);font:600 14.5px/1 inherit;padding:11px 16px;border-radius:10px;cursor:pointer;display:flex;gap:8px;align-items:center}
+.tab svg{width:17px;height:17px}
+.tab[aria-selected=true]{background:var(--panel2);color:var(--text);box-shadow:inset 0 0 0 1px var(--line2)}
+.pane{display:none;max-width:860px;margin:0 auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:30px}
+.pane.on{display:grid;grid-template-columns:1fr auto;gap:28px;align-items:start}
+.pane h4{margin:0 0 4px;font-size:21px}
+.pane .meta{color:var(--muted);font-size:14px;margin-bottom:18px}
+.pane ol{margin:0;padding-left:20px;color:var(--text);font-size:15.5px}
+.pane ol li{padding:5px 0}
+.pane ol li::marker{color:var(--a1);font-weight:700}
+.pane .tip{margin-top:16px;font-size:14px;color:var(--muted);background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.pane .side{display:flex;flex-direction:column;gap:10px;min-width:220px}
+.pane .side small{color:var(--dim);font-size:12.5px;text-align:center}
+.code{position:relative;background:#07090d;border:1px solid var(--line);border-radius:12px;padding:12px 46px 12px 14px;font-size:13.5px;color:#cfd6ea;margin:8px 0;overflow-x:auto;white-space:pre}
+.code .c{color:var(--dim)}
+.copy{position:absolute;right:8px;top:8px;border:1px solid var(--line2);background:var(--panel);color:var(--muted);border-radius:8px;padding:4px 8px;font-size:11.5px;cursor:pointer}
+.copy:hover{color:var(--text)}
+
+/* security */
+.sec{display:grid;grid-template-columns:1.1fr 1fr;gap:40px;align-items:center}
+.seclist{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.si{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}
+.si svg{width:20px;height:20px;color:var(--ok);margin-bottom:8px}
+.si h5{margin:0 0 4px;font-size:15.5px}
+.si p{margin:0;color:var(--muted);font-size:13.5px}
+.warnbox{margin-top:22px;border:1px solid rgba(242,169,59,.35);background:rgba(242,169,59,.07);border-radius:14px;padding:14px 16px;font-size:14.5px;color:#f3d6a6;display:flex;gap:10px}
+.warnbox svg{width:20px;height:20px;flex:none;color:var(--warn);margin-top:2px}
+
+/* branches */
+.branches{margin-top:40px;display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.br{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}
+.br code{font-size:13px;color:var(--a1);background:rgba(107,139,255,.1);padding:3px 8px;border-radius:7px}
+.br p{margin:10px 0 0;color:var(--muted);font-size:14px}
+
+/* star */
+.star{text-align:center;background:radial-gradient(500px 220px at 50% 0,rgba(107,139,255,.14),transparent 70%);border-top:1px solid rgba(255,255,255,.06);border-bottom:1px solid rgba(255,255,255,.06)}
+.star .cta{margin-top:26px}
+
+/* faq */
+.faq{max-width:820px;margin:40px auto 0}
+details{border:1px solid var(--line);background:var(--panel);border-radius:14px;margin-bottom:10px;overflow:hidden}
+summary{list-style:none;cursor:pointer;padding:18px 20px;font-weight:620;font-size:16.5px;display:flex;justify-content:space-between;gap:16px;align-items:center}
+summary::-webkit-details-marker{display:none}
+summary:after{content:"+";font-size:22px;color:var(--muted);line-height:1;transition:transform .2s}
+details[open] summary:after{transform:rotate(45deg)}
+details p{margin:0;padding:0 20px 18px;color:var(--muted);font-size:15.5px}
+details code{font-size:13.5px;background:var(--bg2);border:1px solid var(--line);padding:1px 6px;border-radius:6px;color:var(--text)}
+
+/* footer */
+footer{padding:56px 0 40px;border-top:1px solid rgba(255,255,255,.06);color:var(--muted);font-size:14.5px}
+.fgrid{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:28px}
+footer h6{margin:0 0 12px;color:var(--text);font-size:14px}
+footer ul{list-style:none;margin:0;padding:0}
+footer li{padding:4px 0}
+footer a:hover{color:var(--text)}
+.fine{margin-top:40px;padding-top:20px;border-top:1px solid rgba(255,255,255,.06);font-size:13px;color:var(--dim);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+.reveal{opacity:0;transform:translateY(18px);transition:opacity .7s ease,transform .7s ease}
+.reveal.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.reveal{opacity:1;transform:none}}
+
+/* ---------- responsive */
+@media (max-width:980px){
+  .stage{height:auto;display:flex;flex-direction:column;align-items:center;gap:28px}
+  .win{position:relative;width:100%}
+  .phone{position:relative;top:0}
+  .grid{grid-template-columns:repeat(4,1fr)}.grid .tile:nth-child(n+9){display:none}
+  .plats{grid-template-columns:repeat(3,1fr)}
+  .feats,.perms,.steps{grid-template-columns:1fr 1fr}
+  .feat.big{grid-column:span 2}
+  .sec{grid-template-columns:1fr}
+  .branches{grid-template-columns:1fr 1fr}
+  .fgrid{grid-template-columns:1fr 1fr}
+}
+@media (max-width:760px){
+  .nav nav,.nav .hide-m{display:none}
+  .menu-btn{display:block}
+  .nav.open nav{display:flex;position:absolute;top:64px;left:0;right:0;flex-direction:column;gap:0;background:var(--bg2);border-bottom:1px solid var(--line);padding:8px 24px}
+  .nav.open nav a{padding:12px 0;border-bottom:1px solid var(--line)}
+  section{padding:72px 0}
+  .hero{padding-top:56px}
+  .grid{grid-template-columns:repeat(3,1fr);gap:9px;padding:12px}.grid .tile:nth-child(n+7){display:none}
+  .url{margin:0 8px}
+  .ex-top .fake-in{display:none}
+  .plats{grid-template-columns:1fr 1fr}
+  .compare,.feats,.perms,.steps,.seclist,.branches{grid-template-columns:1fr}
+  .feat.big{grid-column:auto;grid-template-columns:1fr}
+  .pane.on{grid-template-columns:1fr}
+  .pane{padding:22px}
+  .tabs{width:100%}
+  .tab{flex:1;justify-content:center;padding:10px 8px;font-size:13.5px}
+  .tab span{display:none}
+  .fgrid{grid-template-columns:1fr}
+  .stats{gap:22px}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav" id="nav">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="FileBridge home">
+      <span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9h12l-3.5-3.5M19 15H7l3.5 3.5"/></svg></span>
+      FileBridge
+    </a>
+    <nav aria-label="Main">
+      <a href="#how">How it works</a>
+      <a href="#permissions">Permissions</a>
+      <a href="#features">Features</a>
+      <a href="#download">Download</a>
+      <a href="#faq">Questions</a>
+    </nav>
+    <span class="sp"></span>
+    <a class="btn btn-sm hide-m" href="https://github.com/Sree-Ram-MS/File-Bridge" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+      GitHub
+    </a>
+    <a class="btn btn-p btn-sm" href="#download">Download</a>
+    <button class="menu-btn" id="menuBtn" aria-label="Open menu" aria-expanded="false">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+  </div>
+</header>
+
+<main id="main">
+<!-- ================= HERO ================= -->
+<section class="hero" id="top">
+  <div class="wrap">
+    <a class="pill" href="https://github.com/Sree-Ram-MS/File-Bridge/releases/tag/v0.1.0" target="_blank" rel="noopener"><b>v0.1.0</b> First release: Windows, Ubuntu and Android</a>
+    <h1>Share a folder.<br><em>Decide who gets in.</em></h1>
+    <p class="lead">FileBridge shares folders over your Wi‑Fi with a real file explorer. Every device asks first, and you choose whether it can view, upload, or change things.</p>
+    <div class="cta">
+      <a class="btn btn-p" href="#download">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M4 19h16"/></svg>
+        Download FileBridge
+      </a>
+      <a class="btn" href="#how">See how it works</a>
+    </div>
+    <ul class="stats">
+      <li><b>4</b>platforms</li>
+      <li><b>0</b>accounts or cloud</li>
+      <li><b>68 KB</b>Android app</li>
+      <li><b>1</b>address to type</li>
+    </ul>
+
+    <div class="stage reveal" aria-hidden="true">
+      <!-- browser explorer mock -->
+      <div class="win">
+        <div class="bar"><div class="dots"><i></i><i></i><i></i></div><div class="url">http://<b>192.168.1.24:8000</b></div></div>
+        <div class="ex-top">
+          <span class="crumb">Downloads › <b>Project files</b></span>
+          <span class="chip ok">View &amp; upload</span>
+          <span class="sp"></span>
+          <span class="fake-in"></span>
+          <span class="fake-btn">Upload</span>
+        </div>
+        <div class="grid">
+          <div class="tile"><div class="th f"><svg viewBox="0 0 24 24" fill="#f3b43f"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h4l2 2h7A2.5 2.5 0 0 1 21 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg></div><div class="nm">Designs</div><div class="sz">Folder</div></div>
+          <div class="tile"><div class="th i1"></div><div class="nm">banner-final.png</div><div class="sz">2.4 MB</div></div>
+          <div class="tile"><div class="th v"><svg viewBox="0 0 24 24" fill="#a66bff"><path d="M8 5v14l11-7z"/></svg></div><div class="nm">demo-recording.mp4</div><div class="sz">184 MB</div></div>
+          <div class="tile"><div class="th p"><svg viewBox="0 0 24 24" fill="none" stroke="#f0505f" stroke-width="1.8"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></div><div class="nm">invoice-oct.pdf</div><div class="sz">320 KB</div></div>
+          <div class="tile"><div class="th i2"></div><div class="nm">office-trip.jpg</div><div class="sz">3.1 MB</div></div>
+          <div class="tile"><div class="th f"><svg viewBox="0 0 24 24" fill="#f3b43f"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h4l2 2h7A2.5 2.5 0 0 1 21 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg></div><div class="nm">Odoo modules</div><div class="sz">Folder</div></div>
+          <div class="tile"><div class="th z"><svg viewBox="0 0 24 24" fill="none" stroke="#36c98a" stroke-width="1.8"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M12 3v2m0 2v2m0 2v2"/></svg></div><div class="nm">backup.zip</div><div class="sz">1.2 GB</div></div>
+          <div class="tile"><div class="th i3"></div><div class="nm">logo-draft.webp</div><div class="sz">890 KB</div></div>
+          <div class="tile"><div class="th p"><svg viewBox="0 0 24 24" fill="none" stroke="#6b8bff" stroke-width="1.8"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></div><div class="nm">notes.md</div><div class="sz">12 KB</div></div>
+          <div class="tile"><div class="th v"><svg viewBox="0 0 24 24" fill="#6b8bff"><path d="M9 18V6l10-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/></svg></div><div class="nm">standup.m4a</div><div class="sz">6.8 MB</div></div>
+        </div>
+        <div class="upl">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 20h16"/></svg>
+          Uploading <b style="color:var(--text)">release-build.apk</b>
+          <div class="prog"><i></i></div>
+        </div>
+      </div>
+
+      <!-- phone owner mock -->
+      <div class="phone">
+        <div class="scr">
+          <div class="notch"></div>
+          <div class="sb"><span>9:41</span><span>Wi‑Fi ▪︎ 82%</span></div>
+          <div class="app-h"><span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9h12l-3.5-3.5M19 15H7l3.5 3.5"/></svg></span>FileBridge</div>
+          <div class="card req">
+            <div class="who"><div class="av">A</div><div><h5>Anu's laptop</h5><p>192.168.1.31 · Windows · just now</p></div></div>
+            <div class="sel">View &amp; upload ▾</div>
+            <div class="acts"><span class="y">Approve</span><span>Deny</span></div>
+          </div>
+          <div class="card">
+            <h5>Connect from another device</h5>
+            <p>Same Wi‑Fi. Open this in any browser.</p>
+            <div class="addr">192.168.1.24:8000</div>
+          </div>
+          <div class="card">
+            <h5>Approved devices</h5>
+            <div class="dev"><div class="av">R</div><div class="t">Rahul's phone<small>online now</small></div><span class="chip">View</span></div>
+            <div class="dev"><div class="av">D</div><div class="t">Design PC<small>online now</small></div><span class="chip">Full</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= RUNS ON ================= -->
+<div class="runs divider">
+  <div class="wrap">
+    <h3>Runs on</h3>
+    <div class="plats">
+      <a class="plat" href="#download" data-tab="windows"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10.5 4.4v7.1H3zm8.5-1.25L21 3v8.5h-9.5zM3 12.5h7.5v7.1L3 18.5zm8.5 0H21V21l-9.5-1.3z"/></svg><b>Windows</b><small>10 and 11, one .exe</small></a>
+      <a class="plat" href="#download" data-tab="ubuntu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3"/><circle cx="19.5" cy="12" r="1.8" fill="currentColor"/><circle cx="8.2" cy="5.5" r="1.8" fill="currentColor"/><circle cx="8.2" cy="18.5" r="1.8" fill="currentColor"/></svg><b>Ubuntu</b><small>and Debian, its own window</small></a>
+      <a class="plat" href="#download" data-tab="android"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.6 9.48 19.44 6.3a.5.5 0 0 0-.87-.5l-1.87 3.23a11.4 11.4 0 0 0-9.4 0L5.43 5.8a.5.5 0 1 0-.87.5L6.4 9.48A10.8 10.8 0 0 0 1 18h22a10.8 10.8 0 0 0-5.4-8.52ZM7 15.25A1.25 1.25 0 1 1 8.25 14 1.25 1.25 0 0 1 7 15.25Zm10 0A1.25 1.25 0 1 1 18.25 14 1.25 1.25 0 0 1 17 15.25Z"/></svg><b>Android</b><small>tiny app, 68 KB</small></a>
+      <a class="plat" href="#download" data-tab="python"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4h5a3 3 0 0 1 3 3v4H9a3 3 0 0 0-3 3v2H5a2 2 0 0 1-2-2v-3a3 3 0 0 1 3-3h6"/><path d="M16 20h-5a3 3 0 0 1-3-3v-4h7a3 3 0 0 0 3-3V8h1a2 2 0 0 1 2 2v3a3 3 0 0 1-3 3h-6"/></svg><b>Any OS</b><small>Python 3.8+, no installs</small></a>
+      <a class="plat" href="#download" data-tab="browser"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 3 2.8 15 0 18M12 3c-2.8 3-2.8 15 0 18"/></svg><b>Any browser</b><small>to connect, nothing to install</small></a>
+    </div>
+  </div>
+</div>
+
+<!-- ================= WHY ================= -->
+<section id="why">
+  <div class="wrap">
+    <div class="center reveal">
+      <p class="kicker">Why FileBridge</p>
+      <h2>Like <span class="mono" style="font-size:.78em">http.server</span>, minus the worry</h2>
+      <p class="sub">Typing one Python command to share files with the next desk is handy. It also lets anyone on the network read everything in that folder, and nobody can send files back.</p>
+    </div>
+    <div class="compare reveal">
+      <div class="cmp">
+        <h4>python3 -m http.server</h4>
+        <div class="cmd mono">The quick way</div>
+        <ul>
+          <li class="x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>Anyone on the Wi‑Fi can read the folder</li>
+          <li class="x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>Download only, no way to send files back</li>
+          <li class="x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>A bare list of links, no previews</li>
+          <li class="x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>You have to look up your own IP</li>
+          <li class="x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>Needs a terminal on every machine</li>
+        </ul>
+      </div>
+      <div class="cmp new">
+        <h4>FileBridge</h4>
+        <div class="cmd mono">The same idea, done properly</div>
+        <ul>
+          <li class="y2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Every device asks, and you approve it</li>
+          <li class="y2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Uploads, new folders, rename and delete, if you allow them</li>
+          <li class="y2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>A real explorer with thumbnails and previews</li>
+          <li class="y2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Your address is on screen, ready to share</li>
+          <li class="y2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>A real app on Ubuntu and Android, one double-click on Windows</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= HOW ================= -->
+<section id="how" class="divider">
+  <div class="wrap">
+    <div class="center reveal">
+      <p class="kicker">How it works</p>
+      <h2>Three steps, then it just works</h2>
+      <p class="sub">No accounts, no cloud, no app on the other side. Files go straight from one device to the other over your own network.</p>
+    </div>
+    <div class="steps">
+      <div class="step reveal">
+        <h4>Start sharing</h4>
+        <p>Open FileBridge and pick a folder. It shows your address on the dashboard.</p>
+        <div class="mini"><div class="addr">http://192.168.1.24:8000</div></div>
+      </div>
+      <div class="step reveal">
+        <h4>They ask for access</h4>
+        <p>On the same Wi‑Fi, they open that address in any browser, type a name and tap Request access.</p>
+        <div class="mini"><div class="row"><div class="in">Anu's laptop</div><div class="go">Request access</div></div></div>
+      </div>
+      <div class="step reveal">
+        <h4>You approve</h4>
+        <p>Their request pops up on your dashboard. Pick what they can do and approve. Their browser opens your folder.</p>
+        <div class="mini"><div class="row"><div class="in">View &amp; upload ▾</div><div class="go">Approve</div></div></div>
+      </div>
+    </div>
+    <div class="flow reveal">
+      <span>Their browser</span><i>→</i><span>Your Wi‑Fi</span><i>→</i><span>FileBridge on your device</span><i>→</i><span>Your folder</span>
+    </div>
+    <p class="note reveal">Approved devices are remembered, so next time they open the address and go straight in. Both of you can run FileBridge to share in both directions.</p>
+  </div>
+</section>
+
+<!-- ================= PERMISSIONS ================= -->
+<section id="permissions" class="divider">
+  <div class="wrap">
+    <div class="center reveal">
+      <p class="kicker">Permissions</p>
+      <h2>Three levels, per device</h2>
+      <p class="sub">Give the intern view-only access and your teammate full control, at the same time. Change it or remove someone whenever you like.</p>
+    </div>
+    <div class="perms">
+      <div class="perm reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></div>
+        <h4>View &amp; download</h4>
+        <p>For anyone who just needs a file from you.</p>
+        <ul><li>Browse, search and preview</li><li>Download files</li><li>Download whole folders as ZIP</li></ul>
+      </div>
+      <div class="perm reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 20h16"/></svg></div>
+        <h4>View &amp; upload</h4>
+        <p>For people sending work back to you.</p>
+        <ul><li>Everything in View</li><li>Upload files and whole folders</li><li>Create new folders</li></ul>
+      </div>
+      <div class="perm reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg></div>
+        <h4>Full access</h4>
+        <p>For people you trust with the folder.</p>
+        <ul><li>Everything in Upload</li><li>Rename files and folders</li><li>Delete files and folders</li></ul>
+      </div>
+    </div>
+    <p class="note reveal">Nobody can see anything outside the folder you share, and the device doing the sharing always has full control.</p>
+  </div>
+</section>
+
+<!-- ================= FEATURES ================= -->
+<section id="features" class="divider">
+  <div class="wrap">
+    <div class="center reveal">
+      <p class="kicker">Features</p>
+      <h2>A file explorer, not a list of links</h2>
+      <p class="sub">The people you approve get a proper explorer in their browser, on a phone or a PC.</p>
+    </div>
+    <div class="feats">
+      <div class="feat big reveal">
+        <div>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m3 16 5-5 4 4 3-3 6 6"/><circle cx="15.5" cy="8.5" r="1.5"/></svg>
+          <h4>Preview before you download</h4>
+          <p>Images, video, audio, PDFs, text and code open right in the browser. Video seeks instantly, even in big files.</p>
+        </div>
+        <div class="pv"><div class="img"></div><div class="ctl"><span>1:12</span><div class="tb"></div><span>3:05</span></div></div>
+      </div>
+      <div class="feat reveal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 20h16"/></svg>
+        <h4>Drag and drop uploads</h4>
+        <p>Drop files or whole folders in. Progress shows for each one, and nothing is overwritten.</p>
+      </div>
+      <div class="feat reveal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        <h4>Grid or list</h4>
+        <p>Thumbnails for photos, or a tidy list with sizes and dates. Sort by name, size or date.</p>
+      </div>
+      <div class="feat reveal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <h4>Search and breadcrumbs</h4>
+        <p>Find a file as you type, and jump back up the folder path in one tap.</p>
+      </div>
+      <div class="feat reveal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M12 3v2m0 2v2m0 2v2"/></svg>
+        <h4>Folders as ZIP</h4>
+        <p>Grab a whole folder in one download. The ZIP streams as it builds, so big folders start right away.</p>
+      </div>
+      <div class="feat reveal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>
+        <h4>Copy a link</h4>
+        <p>Send a direct link to one file. It only opens for devices you've approved.</p>
+      </div>
+      <div class="feat reveal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        <h4>Light and dark</h4>
+        <p>Follows the system theme on every device, phone or desktop.</p>
+      </div>
+      <div class="feat reveal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+        <h4>Requests on your phone</h4>
+        <p>On Android, a notification tells you when someone asks to connect, and sharing keeps running with the screen off.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= DOWNLOAD ================= -->
+<section id="download" class="divider">
+  <div class="wrap">
+    <div class="center reveal">
+      <p class="kicker">Download</p>
+      <h2>Get FileBridge for your device</h2>
+      <p class="sub">Install it on the device that shares the files. Everyone connecting only needs a browser.</p>
+    </div>
+
+    <div class="tabs" role="tablist" aria-label="Platforms">
+      <button class="tab" role="tab" id="t-windows" aria-controls="p-windows" aria-selected="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10.5 4.4v7.1H3zm8.5-1.25L21 3v8.5h-9.5zM3 12.5h7.5v7.1L3 18.5zm8.5 0H21V21l-9.5-1.3z"/></svg><span>Windows</span></button>
+      <button class="tab" role="tab" id="t-ubuntu" aria-controls="p-ubuntu" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3"/></svg><span>Ubuntu</span></button>
+      <button class="tab" role="tab" id="t-android" aria-controls="p-android" aria-selected="false"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.6 9.48 19.44 6.3a.5.5 0 0 0-.87-.5l-1.87 3.23a11.4 11.4 0 0 0-9.4 0L5.43 5.8a.5.5 0 1 0-.87.5L6.4 9.48A10.8 10.8 0 0 0 1 18h22a10.8 10.8 0 0 0-5.4-8.52Z"/></svg><span>Android</span></button>
+      <button class="tab" role="tab" id="t-python" aria-controls="p-python" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 4h5a3 3 0 0 1 3 3v4H9a3 3 0 0 0-3 3v2H5a2 2 0 0 1-2-2v-3a3 3 0 0 1 3-3h6"/><path d="M16 20h-5a3 3 0 0 1-3-3v-4h7a3 3 0 0 0 3-3V8h1a2 2 0 0 1 2 2v3a3 3 0 0 1-3 3h-6"/></svg><span>Any OS</span></button>
+      <button class="tab" role="tab" id="t-browser" aria-controls="p-browser" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/></svg><span>Connect</span></button>
+    </div>
+
+    <div class="pane on" id="p-windows" role="tabpanel" aria-labelledby="t-windows">
+      <div>
+        <h4>Windows 10 and 11</h4>
+        <div class="meta">One portable .exe, about 8.8 MB. No installer, no Python needed.</div>
+        <ol>
+          <li>Download <b>FileBridge-0.1.0-windows-x64.exe</b>.</li>
+          <li>Double-click it. If SmartScreen appears, choose <b>More info</b>, then <b>Run anyway</b>.</li>
+          <li>At the firewall prompt, allow it on <b>Private networks</b>.</li>
+          <li>The dashboard opens in your browser with your address. It shares your Downloads folder until you pick another.</li>
+        </ol>
+        <div class="tip">The app isn't code-signed yet, which is why Windows asks once before running it.</div>
+      </div>
+      <div class="side">
+        <a class="btn btn-p" href="https://github.com/Sree-Ram-MS/File-Bridge/releases/download/v0.1.0/FileBridge-0.1.0-windows-x64.exe">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M4 19h16"/></svg>Download .exe</a>
+        <small>v0.1.0 · x64</small>
+      </div>
+    </div>
+
+    <div class="pane" id="p-ubuntu" role="tabpanel" aria-labelledby="t-ubuntu">
+      <div>
+        <h4>Ubuntu and Debian</h4>
+        <div class="meta">A .deb that opens FileBridge in its own app window. No terminal, no browser tab.</div>
+        <ol>
+          <li>Download <b>filebridge_0.1.0_all.deb</b>.</li>
+          <li>Install it:
+            <div class="code"><button class="copy">Copy</button>sudo apt install ./filebridge_0.1.0_all.deb</div></li>
+          <li>Open <b>FileBridge</b> from the app menu. The dashboard opens in its own window, and closing it stops sharing.</li>
+          <li>Files you download from a friend save to <b>Downloads</b>, with a notification for each.</li>
+        </ol>
+        <div class="tip">Prefer the terminal? Run <span class="mono">filebridge ~/folder</span>. If UFW is on, open the port once: <span class="mono">sudo ufw allow 8000/tcp</span></div>
+      </div>
+      <div class="side">
+        <a class="btn btn-p" href="https://github.com/Sree-Ram-MS/File-Bridge/releases/download/v0.1.0/filebridge_0.1.0_all.deb">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M4 19h16"/></svg>Download .deb</a>
+        <small>v0.1.0 · all architectures</small>
+      </div>
+    </div>
+
+    <div class="pane" id="p-android" role="tabpanel" aria-labelledby="t-android">
+      <div>
+        <h4>Android 7 and newer</h4>
+        <div class="meta">A 68 KB app that turns your phone into a FileBridge host.</div>
+        <ol>
+          <li>Download <b>FileBridge-0.1.0-android.apk</b> on your phone and open it.</li>
+          <li>If asked, allow installing apps from your browser or file manager.</li>
+          <li>Open FileBridge and allow <b>All files access</b> and notifications.</li>
+          <li>Share the address on screen. Requests arrive as notifications, and sharing keeps going until you tap <b>Stop sharing</b>.</li>
+        </ol>
+        <div class="tip">Want to connect to someone else's FileBridge from your phone? You don't need the app for that, just your browser.</div>
+      </div>
+      <div class="side">
+        <a class="btn btn-p" href="https://github.com/Sree-Ram-MS/File-Bridge/releases/download/v0.1.0/FileBridge-0.1.0-android.apk">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M4 19h16"/></svg>Download .apk</a>
+        <small>v0.1.0 · 68 KB</small>
+      </div>
+    </div>
+
+    <div class="pane" id="p-python" role="tabpanel" aria-labelledby="t-python">
+      <div>
+        <h4>Any OS with Python 3.8+</h4>
+        <div class="meta">One file, standard library only. Works on macOS, Linux, Windows and even a Raspberry Pi.</div>
+        <ol>
+          <li>Download and unzip <b>FileBridge-0.1.0-portable.zip</b>.</li>
+          <li>Run it with the folder you want to share:
+            <div class="code"><button class="copy">Copy</button>python3 filebridge.py ~/Downloads</div></li>
+          <li>The dashboard opens at <span class="mono">localhost:8000/admin</span>.</li>
+        </ol>
+        <div class="code"><span class="c"># more options</span>
+python3 filebridge.py . --port 9000 --no-browser</div>
+      </div>
+      <div class="side">
+        <a class="btn btn-p" href="https://github.com/Sree-Ram-MS/File-Bridge/releases/download/v0.1.0/FileBridge-0.1.0-portable.zip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M4 19h16"/></svg>Download .zip</a>
+        <small>v0.1.0 · 22 KB</small>
+      </div>
+    </div>
+
+    <div class="pane" id="p-browser" role="tabpanel" aria-labelledby="t-browser">
+      <div>
+        <h4>Connecting to someone's FileBridge</h4>
+        <div class="meta">iPhone, Android, Windows, Mac, Linux, a tablet: anything with a browser.</div>
+        <ol>
+          <li>Join the same Wi‑Fi or hotspot as the sharing device.</li>
+          <li>Type the address they show you, like <span class="mono">192.168.1.24:8000</span>, into your browser.</li>
+          <li>Enter a name for your device and tap <b>Request access</b>.</li>
+          <li>Once they approve, their folder opens. Next time you go straight in.</li>
+        </ol>
+      </div>
+      <div class="side">
+        <a class="btn" href="#how">How it works</a>
+        <small>Nothing to install</small>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SECURITY ================= -->
+<section id="security" class="divider">
+  <div class="wrap sec">
+    <div class="reveal">
+      <p class="kicker">Privacy and safety</p>
+      <h2>Your files never leave your network</h2>
+      <p class="sub">There's no FileBridge server, account or cloud. Files travel straight between the two devices on your own Wi‑Fi.</p>
+      <div class="warnbox">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+        <span>Like <span class="mono">http.server</span>, traffic is plain HTTP. Use FileBridge on networks you trust, such as your office or home Wi‑Fi, not public hotspots.</span>
+      </div>
+    </div>
+    <div class="seclist">
+      <div class="si reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><h5>Approval first</h5><p>No one sees a single file until you approve their device.</p></div>
+      <div class="si reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><h5>Locked to one folder</h5><p>Paths that try to escape the shared folder are blocked.</p></div>
+      <div class="si reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg><h5>Revoke anytime</h5><p>Remove a device and its access ends on its very next click.</p></div>
+      <div class="si reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6z"/></svg><h5>Safe uploads</h5><p>Uploads never overwrite files, and half-finished ones are cleaned up.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= OPEN SOURCE ================= -->
+<section id="source" class="divider">
+  <div class="wrap">
+    <div class="center reveal">
+      <p class="kicker">Open source</p>
+      <h2>One core, a branch per platform</h2>
+      <p class="sub">The core is a single Python file with no dependencies. Each platform lives on its own branch, and GitHub Actions builds every package into the release.</p>
+    </div>
+    <div class="branches">
+      <div class="br reveal"><code>main</code><p>The core app, tests and the portable build.</p></div>
+      <div class="br reveal"><code>ubuntu</code><p>Debian packaging, app-menu entry and icon.</p></div>
+      <div class="br reveal"><code>windows</code><p>The one-file Windows executable.</p></div>
+      <div class="br reveal"><code>android</code><p>A small plain-Java host app with the same API.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="star">
+  <div class="wrap reveal">
+    <h2>Saved you a <span class="mono" style="font-size:.78em">python3 -m</span>? Star it.</h2>
+    <p class="sub" style="margin:0 auto">A star takes one click and helps the next person find it. Bugs and ideas are welcome too.</p>
+    <div class="cta">
+      <a class="btn btn-p" href="https://github.com/Sree-Ram-MS/File-Bridge" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 2.8 2.8 5.8 6.4.9-4.6 4.5 1.1 6.3L12 17.3l-5.7 3 1.1-6.3L2.8 9.5l6.4-.9z"/></svg>
+        Star on GitHub <span id="stars"></span></a>
+      <a class="btn" href="https://github.com/Sree-Ram-MS/File-Bridge/issues" target="_blank" rel="noopener">Report a problem</a>
+    </div>
+  </div>
+</section>
+
+<!-- ================= FAQ ================= -->
+<section id="faq">
+  <div class="wrap">
+    <div class="center reveal">
+      <p class="kicker">Questions</p>
+      <h2>Before you install</h2>
+    </div>
+    <div class="faq">
+      <details><summary>Do the other people need to install anything?</summary><p>No. They open your address in any browser, on a phone or a computer. Only the device sharing the files runs FileBridge.</p></details>
+      <details><summary>Does it work without internet?</summary><p>Yes. It only needs a local network: office Wi‑Fi, home Wi‑Fi, or a phone hotspot both devices are on.</p></details>
+      <details><summary>Can two people share with each other?</summary><p>Yes. Both run FileBridge and approve each other. The dashboard also has a box to open someone else's address.</p></details>
+      <details><summary>My colleague can't connect. What should I check?</summary><p>Make sure you're on the same network, and that the address includes the port, like <code>:8000</code>. On Windows, allow FileBridge on Private networks. On Ubuntu with UFW, run <code>sudo ufw allow 8000/tcp</code>. Some guest Wi‑Fi networks block devices from seeing each other.</p></details>
+      <details><summary>Is there a file size limit?</summary><p>No set limit. Uploads and downloads stream, so large videos and backups work. Folder ZIPs are best kept under 4 GB on Android.</p></details>
+      <details><summary>Why does Windows warn me before it runs?</summary><p>The executable isn't code-signed yet, so SmartScreen asks once. Choose More info, then Run anyway. The full source is on GitHub.</p></details>
+      <details><summary>Why does the Android app need All files access?</summary><p>So approved devices can browse and upload into the folder you choose, such as Downloads or DCIM. FileBridge only exposes the one folder you share.</p></details>
+      <details><summary>Is it safe on public Wi‑Fi?</summary><p>Not recommended. Traffic is plain HTTP, like <code>python3 -m http.server</code>. Approval keeps strangers out, but use trusted networks for anything sensitive.</p></details>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="fgrid">
+      <div>
+        <a class="brand" href="#top"><span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9h12l-3.5-3.5M19 15H7l3.5 3.5"/></svg></span>FileBridge</a>
+        <p style="max-width:300px;margin:14px 0 0">Share folders on your local network, with permission. A friendlier <span class="mono">python3 -m http.server</span>.</p>
+      </div>
+      <div><h6>Product</h6><ul><li><a href="#how">How it works</a></li><li><a href="#permissions">Permissions</a></li><li><a href="#features">Features</a></li><li><a href="#faq">Questions</a></li></ul></div>
+      <div><h6>Download</h6><ul><li><a href="#download" data-tab="windows">Windows</a></li><li><a href="#download" data-tab="ubuntu">Ubuntu / Debian</a></li><li><a href="#download" data-tab="android">Android</a></li><li><a href="#download" data-tab="python">Portable (Python)</a></li></ul></div>
+      <div><h6>Project</h6><ul><li><a href="https://github.com/Sree-Ram-MS/File-Bridge" target="_blank" rel="noopener">Source code</a></li><li><a href="https://github.com/Sree-Ram-MS/File-Bridge/releases" target="_blank" rel="noopener">Releases</a></li><li><a href="https://github.com/Sree-Ram-MS/File-Bridge/issues" target="_blank" rel="noopener">Issues</a></li></ul></div>
+    </div>
+    <div class="fine"><span>© 2026 Sree Ram M S</span><span>Built for sharing files with the next desk.</span></div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  // mobile menu
+  var nav=document.getElementById('nav'),mb=document.getElementById('menuBtn');
+  mb.addEventListener('click',function(){var o=nav.classList.toggle('open');mb.setAttribute('aria-expanded',o)});
+  nav.querySelectorAll('nav a').forEach(function(a){a.addEventListener('click',function(){nav.classList.remove('open')})});
+
+  // download tabs
+  var tabs=[].slice.call(document.querySelectorAll('.tab'));
+  function show(id){tabs.forEach(function(t){var on=t.id==='t-'+id;t.setAttribute('aria-selected',on);document.getElementById(t.getAttribute('aria-controls')).classList.toggle('on',on)})}
+  tabs.forEach(function(t){t.addEventListener('click',function(){show(t.id.slice(2))})});
+  document.querySelectorAll('[data-tab]').forEach(function(a){a.addEventListener('click',function(){show(a.dataset.tab)})});
+  var ua=navigator.userAgent;
+  show(/Android/i.test(ua)?'android':/iPhone|iPad/i.test(ua)?'browser':/Windows/i.test(ua)?'windows':/Linux/i.test(ua)?'ubuntu':/Mac/i.test(ua)?'python':'windows');
+
+  // copy buttons
+  document.querySelectorAll('.copy').forEach(function(b){b.addEventListener('click',function(){
+    var txt=b.parentNode.textContent.replace(b.textContent,'').trim();
+    (navigator.clipboard?navigator.clipboard.writeText(txt):Promise.reject()).then(function(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy'},1500)},function(){b.textContent='Select it';});
+  })});
+
+  // reveal on scroll
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}})},{threshold:.12});
+    document.querySelectorAll('.reveal').forEach(function(el){io.observe(el)});
+  } else document.querySelectorAll('.reveal').forEach(function(el){el.classList.add('in')});
+
+  // GitHub stars
+  fetch('https://api.github.com/repos/Sree-Ram-MS/File-Bridge').then(function(r){return r.json()}).then(function(j){
+    if(typeof j.stargazers_count==='number'&&j.stargazers_count>0)document.getElementById('stars').textContent='· '+j.stargazers_count;
+  }).catch(function(){});
+})();
+</script>
+</body>
+</html>
