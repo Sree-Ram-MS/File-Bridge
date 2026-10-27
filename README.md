@@ -46,3 +46,15 @@ The dashboard opens at `http://localhost:8000/admin`. Approved devices are remem
 
 - Traffic is plain HTTP on your LAN, like `http.server`. Use it on trusted networks only.
 - Ubuntu with ufw enabled: `sudo ufw allow 8000/tcp`.
+
+## Windows packaging (this branch)
+
+On Windows with Python 3.8+:
+
+```bat
+packaging\windows\build.bat        :: -> dist\FileBridge.exe
+```
+
+`FileBridge.exe` is a single portable file. Double-click it: a console window shows the address, and the dashboard opens in your browser. Close the window to stop sharing. With no folder given it shares the last folder chosen in the dashboard, else your Downloads folder. Pushing to `windows` builds the exe in GitHub Actions and attaches it to the release.
+
+SmartScreen may warn on first run because the exe isn't code-signed: choose *More info > Run anyway*.
