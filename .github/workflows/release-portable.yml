@@ -1,0 +1,30 @@
+name: Portable release
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  portable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Test
+        run: python3 tests/test_api.py
+      - name: Build portable zip
+        run: |
+          VER=$(python3 -c "import filebridge;print(filebridge.VERSION)")
+          echo "VER=$VER" >> $GITHUB_ENV
+          mkdir -p dist/FileBridge
+          cp filebridge.py README.md dist/FileBridge/
+          printf '#!/usr/bin/env bash\ncd "$(dirname "$0")"\npython3 filebridge.py "$@"\n' > dist/FileBridge/start.sh
+          chmod +x dist/FileBridge/start.sh
+          printf '@echo off\r\ncd /d "%%~dp0"\r\npy filebridge.py %%*\r\nif errorlevel 9009 python filebridge.py %%*\r\npause\r\n' > dist/FileBridge/start.bat
+          cd dist && zip -r "FileBridge-$VER-portable.zip" FileBridge
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VER }}
+          files: dist/FileBridge-${{ env.VER }}-portable.zip
