@@ -18,7 +18,8 @@ Get the latest build from **Releases**:
 | Windows 10/11 | `FileBridge-<version>-windows-x64.exe` | Double-click. Allow it on *Private networks* at the firewall prompt. |
 | Ubuntu / Debian | `filebridge_<version>_all.deb` | `sudo apt install ./filebridge_<version>_all.deb`, then open **FileBridge** from the app menu or run `filebridge`. |
 | Any OS with Python 3.8+ | `FileBridge-<version>-portable.zip` | `python3 filebridge.py ~/Downloads` |
-| Android, iPhone, any browser | nothing to install | Open the address shown on the sharing device. |
+| Android (to share from the phone) | `FileBridge-<version>-android.apk` | Install, allow *All files access*, keep the app open while sharing. |
+| Any browser (to connect) | nothing to install | Open the address shown on the sharing device. |
 
 ## Branches
 
@@ -27,7 +28,7 @@ Get the latest build from **Releases**:
 | `main` | Core app (`filebridge.py`, pure Python stdlib, no dependencies), tests, portable release |
 | `ubuntu` | Debian/Ubuntu packaging (`.deb`, app-menu entry, icon) and its CI build |
 | `windows` | Windows packaging (PyInstaller `.exe`) and its CI build |
-| `android` | Android host app (planned) |
+| `android` | Android host app (Flutter, in `flutter_app/`) and its CI build |
 
 Platform branches build automatically on push with GitHub Actions and attach their package to the release `v<version>`.
 
@@ -46,3 +47,7 @@ The dashboard opens at `http://localhost:8000/admin`. Approved devices are remem
 
 - Traffic is plain HTTP on your LAN, like `http.server`. Use it on trusted networks only.
 - Ubuntu with ufw enabled: `sudo ufw allow 8000/tcp`.
+
+## Android app (this branch)
+
+The Flutter app in `flutter_app/` hosts FileBridge on a phone with the same API and web explorer, so desktop and phone users connect the same way. See `flutter_app/README.md` to build it. Pushing to `android` builds the APK in GitHub Actions and attaches it to the release.

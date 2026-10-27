@@ -1,0 +1,61 @@
+<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>FileBridge · Connect</title><style>
+:root{--bg:#0e1015;--panel:#161920;--panel2:#1d212a;--line:#2a2f3b;--text:#e9ebf1;--muted:#8a92a6;--accent:#6b8bff;--accent2:#5272f5;--ok:#36c98a;--warn:#f2a93b;--err:#f0505f;--r:14px}
+@media (prefers-color-scheme:light){:root{--bg:#f4f5f9;--panel:#fff;--panel2:#eef0f5;--line:#dfe2ea;--text:#151821;--muted:#666f84}}
+*{box-sizing:border-box}[hidden]{display:none!important}
+html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,sans-serif}
+a{color:var(--accent);text-decoration:none}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--text);padding:8px 14px;border-radius:10px;transition:border-color .15s,background .15s;white-space:nowrap}
+button:hover{border-color:var(--accent)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}.btn-primary:hover{background:var(--accent2)}
+.btn-danger{color:var(--err)}.btn-danger-fill{background:var(--err);border-color:var(--err);color:#fff}
+.btn-ghost{background:transparent;border-color:transparent}.btn-ghost:hover{background:var(--panel2)}
+input,select{font:inherit;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:8px 12px;outline:none;min-width:0}
+input:focus,select:focus{border-color:var(--accent)}
+.topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:12px;padding:12px 20px;background:var(--bg);border-bottom:1px solid var(--line)}
+.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:16px;letter-spacing:.2px}
+.logo i{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#6b8bff,#a66bff);display:grid;place-items:center;color:#fff;font-style:normal}
+.chip{padding:3px 10px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);color:var(--muted);font-size:12px;white-space:nowrap}
+.chip.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,var(--line))}
+.spacer{flex:1}.muted{color:var(--muted)}.full{width:100%}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:20px}
+.center{min-height:100vh;display:grid;place-items:center;padding:20px}
+.row-end{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:grid;place-items:center;z-index:60;padding:16px}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;width:min(420px,100%)}
+.modal h3{margin:0 0 8px;font-size:17px}.modal input{margin-top:8px}
+#toasts{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:90}
+.toast{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--ok);padding:10px 16px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.3);animation:up .2s}
+.toast.err{border-left-color:var(--err)}
+@keyframes up{from{transform:translateY(10px);opacity:0}}
+.spin{width:18px;height:18px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp 0.8s linear infinite;display:inline-block;vertical-align:middle}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+.join{width:min(420px,100%);text-align:center;padding:32px 26px}
+.join .logo{justify-content:center;font-size:20px;margin-bottom:18px}.join .logo i{width:40px;height:40px;font-size:20px}
+.join h2{margin:0 0 6px;font-size:20px}.join input{width:100%;margin:18px 0 12px;padding:12px 14px;text-align:center}
+.join button{width:100%;padding:12px}.wait{margin-top:18px;display:flex;gap:10px;align-items:center;justify-content:center}
+</style></head><body><div class="center"><div class="card join"><div class="logo"><i>&#8644;</i>FileBridge</div>
+<h2>Connect to <span id="host">this device</span></h2>
+<p class="muted">Ask for access. The owner approves you on their screen and picks what you can do.</p>
+<div id="form"><input id="name" maxlength="60" placeholder="Your name or device name"><button class="btn-primary" id="go">Request access</button></div>
+<div id="wait" class="wait" hidden><span class="spin"></span><span>Waiting for approval…</span></div>
+<p id="msg" class="muted"></p></div></div><div id='toasts'></div><script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(url,opts={}){opts.headers=Object.assign({'X-FB':'1'},opts.headers||{});const r=await fetch(url,opts);let j={};try{j=await r.json()}catch(_){}if(r.status===401&&!url.includes('request')){location.href='/';throw new Error('Not connected')}if(!r.ok)throw new Error(j.error||r.statusText);return j}
+const post=(u,b)=>api(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+function toast(msg,type){const t=document.createElement('div');t.className='toast '+(type||'');t.textContent=msg;$('#toasts').appendChild(t);setTimeout(()=>t.remove(),3200)}
+function copy(text){const ok=()=>toast('Copied: '+text);if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(text).then(ok);return}const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();try{document.execCommand('copy');ok()}catch(_){prompt('Copy this:',text)}ta.remove()}
+function fmtSize(n){if(n<1024)return n+' B';const u=['KB','MB','GB','TB'];let i=-1;do{n/=1024;i++}while(n>=1024&&i<u.length-1);return n.toFixed(n<10?1:0)+' '+u[i]}
+function fmtDate(t){const d=new Date(t*1000);return d.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})+', '+d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'})}
+function ago(t){const s=Math.max(0,Date.now()/1000-t);if(s<60)return 'just now';if(s<3600)return Math.floor(s/60)+' min ago';if(s<86400)return Math.floor(s/3600)+' h ago';return Math.floor(s/86400)+' d ago'}
+function dialog(o){return new Promise(res=>{const bg=document.createElement('div');bg.className='modal-bg';const hasIn=o.input!==undefined;bg.innerHTML=`<div class="modal"><h3>${esc(o.title)}</h3>${o.text?`<p class="muted">${esc(o.text)}</p>`:''}${hasIn?`<input class="full" value="${esc(o.input)}" placeholder="${esc(o.placeholder||'')}">`:''}<div class="row-end"><button class="cancel">Cancel</button><button class="okb ${o.danger?'btn-danger-fill':'btn-primary'}">${esc(o.ok||'OK')}</button></div></div>`;document.body.appendChild(bg);const inp=bg.querySelector('input');const done=v=>{bg.remove();res(v)};bg.querySelector('.cancel').onclick=()=>done(null);bg.querySelector('.okb').onclick=()=>done(inp?inp.value.trim():true);bg.onclick=e=>{if(e.target===bg)done(null)};if(inp){inp.focus();const d=o.input.lastIndexOf('.');inp.setSelectionRange(0,d>0?d:o.input.length);inp.onkeydown=e=>{if(e.key==='Enter')done(inp.value.trim());if(e.key==='Escape')done(null)}}})}
+
+fetch('/api/info').then(r=>r.json()).then(i=>{$('#host').textContent=i.hostname});
+const ua=navigator.userAgent;const guess=/Android/i.test(ua)?'Android phone':/iPhone|iPad/i.test(ua)?'iPhone':/Windows/i.test(ua)?'Windows PC':/Mac/i.test(ua)?'Mac':/Linux/i.test(ua)?'Linux PC':'My device';
+$('#name').value=localStorage.fbName||guess;
+async function ask(){const name=$('#name').value.trim()||guess;localStorage.fbName=name;try{const r=await post('/api/request-access',{name});if(r.status==='owner'){location.reload();return}localStorage.fbReq=r.id;poll()}catch(e){$('#msg').textContent=e.message}}
+async function poll(){$('#form').hidden=true;$('#wait').hidden=false;$('#msg').textContent='';const id=localStorage.fbReq;try{const r=await (await fetch('/api/request-status?id='+encodeURIComponent(id))).json();if(r.status==='approved'){localStorage.removeItem('fbReq');location.reload();return}if(r.status==='denied'||r.status==='unknown'){localStorage.removeItem('fbReq');$('#form').hidden=false;$('#wait').hidden=true;$('#msg').textContent=r.status==='denied'?'The owner declined your request.':'Request expired. Ask again.';return}}catch(_){}setTimeout(poll,1500)}
+$('#go').onclick=ask;$('#name').onkeydown=e=>{if(e.key==='Enter')ask()};
+if(localStorage.fbReq)poll();
+</script></body></html>

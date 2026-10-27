@@ -1,0 +1,28 @@
+name: filebridge
+description: "FileBridge for Android: share folders on your local network with permission control."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  file_picker: ^13.3.0
+  mime: ^2.0.0
+  path: ^1.9.0
+  path_provider: ^2.1.5
+  permission_handler: ^13.0.0
+  qr_flutter: ^4.1.0
+  url_launcher: ^6.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/web/
