@@ -1,0 +1,4 @@
+#!/bin/sh
+# FileBridge launcher (installed by the .deb)
+export FILEBRIDGE_PACKAGED=1
+exec python3 /usr/lib/filebridge/filebridge.py "$@"

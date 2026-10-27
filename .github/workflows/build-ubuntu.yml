@@ -1,0 +1,27 @@
+name: Build Ubuntu package
+on:
+  push:
+    branches: [ubuntu]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: python3 tests/test_api.py
+      - name: Build .deb
+        run: |
+          bash packaging/ubuntu/build-deb.sh
+          echo "VER=$(python3 -c 'import filebridge;print(filebridge.VERSION)')" >> $GITHUB_ENV
+      - name: Check package
+        run: |
+          dpkg-deb --info build/filebridge_${{ env.VER }}_all.deb
+          sudo apt-get install -y ./build/filebridge_${{ env.VER }}_all.deb
+          filebridge --version
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VER }}
+          files: build/filebridge_${{ env.VER }}_all.deb

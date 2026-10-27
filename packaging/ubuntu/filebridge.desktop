@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=FileBridge
+GenericName=LAN File Sharing
+Comment=Share folders on your network with permission control
+Exec=filebridge
+Icon=filebridge
+Terminal=true
+Categories=Network;FileTransfer;Utility;
+Keywords=share;files;lan;transfer;http;

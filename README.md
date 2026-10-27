@@ -46,3 +46,13 @@ The dashboard opens at `http://localhost:8000/admin`. Approved devices are remem
 
 - Traffic is plain HTTP on your LAN, like `http.server`. Use it on trusted networks only.
 - Ubuntu with ufw enabled: `sudo ufw allow 8000/tcp`.
+
+## Ubuntu packaging (this branch)
+
+```bash
+bash packaging/ubuntu/build-deb.sh          # -> build/filebridge_<version>_all.deb
+sudo apt install ./build/filebridge_*_all.deb
+filebridge ~/Downloads                     # or open FileBridge from the app menu
+```
+
+Installs the app to `/usr/lib/filebridge`, a `filebridge` command, an app-menu entry and an icon. Pushing to `ubuntu` builds the `.deb` in GitHub Actions and attaches it to the release.
