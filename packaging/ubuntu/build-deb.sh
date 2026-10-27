@@ -8,6 +8,7 @@ rm -rf "$PKG" && mkdir -p "$PKG/DEBIAN" "$PKG/usr/lib/filebridge" "$PKG/usr/bin"
   "$PKG/usr/share/applications" "$PKG/usr/share/icons/hicolor/512x512/apps" "$PKG/usr/share/pixmaps" \
   "$PKG/usr/share/doc/filebridge"
 install -m 644 filebridge.py "$PKG/usr/lib/filebridge/filebridge.py"
+install -m 644 packaging/ubuntu/filebridge-app.py "$PKG/usr/lib/filebridge/filebridge-app.py"
 install -m 755 packaging/ubuntu/filebridge "$PKG/usr/bin/filebridge"
 install -m 644 packaging/ubuntu/filebridge.desktop "$PKG/usr/share/applications/filebridge.desktop"
 install -m 644 assets/icon.png "$PKG/usr/share/icons/hicolor/512x512/apps/filebridge.png"
@@ -20,7 +21,7 @@ Version: $VER
 Section: net
 Priority: optional
 Architecture: all
-Depends: python3 (>= 3.8)
+Depends: python3 (>= 3.8), python3-gi, gir1.2-gtk-3.0, gir1.2-webkit2-4.1 | gir1.2-webkit2-4.0
 Installed-Size: $SIZE
 Maintainer: Sree Ram M S <sreerammsofficial@gmail.com>
 Homepage: https://github.com/Sree-Ram-MS/File-Bridge

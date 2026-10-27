@@ -1,4 +1,9 @@
 #!/bin/sh
 # FileBridge launcher (installed by the .deb)
+#   filebridge --app      open the FileBridge window (used by the app menu)
+#   filebridge [folder]   run in the terminal and open the dashboard in a browser
 export FILEBRIDGE_PACKAGED=1
+if [ "$1" = "--app" ]; then
+  exec python3 /usr/lib/filebridge/filebridge-app.py
+fi
 exec python3 /usr/lib/filebridge/filebridge.py "$@"
