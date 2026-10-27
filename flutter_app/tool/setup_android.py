@@ -38,6 +38,16 @@ else:
 open(MANIFEST, "w", encoding="utf-8").write(m)
 print("manifest patched")
 
+# Some plugins (permission_handler) compile against a newer SDK than Flutter's default.
+for name in ("build.gradle.kts", "build.gradle"):
+    g = os.path.join(HERE, "android", "app", name)
+    if os.path.exists(g):
+        t = open(g, encoding="utf-8").read()
+        t = re.sub(r"compileSdk\s*=\s*flutter\.compileSdkVersion", "compileSdk = 37", t)
+        t = re.sub(r"compileSdkVersion\s+flutter\.compileSdkVersion", "compileSdkVersion 37", t)
+        open(g, "w", encoding="utf-8").write(t)
+        print("compileSdk set to 37 in", name)
+
 try:
     from PIL import Image
     img = Image.open(ICON).convert("RGBA")
