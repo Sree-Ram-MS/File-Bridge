@@ -30,7 +30,7 @@ from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP = "FileBridge"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 CHUNK = 256 * 1024
 STATE_DIR = os.path.join(os.path.expanduser("~"), ".filebridge")
 LEVELS = {
@@ -342,8 +342,10 @@ class State:
         self.lock = threading.Lock()
         self.pending = {}   # request id -> info
         self.devices = {}   # token -> info
+        self.transfers = []  # transfer dicts, newest last; see add_transfer
         self.owner_ips = set(local_ips())
         self.file = os.path.join(STATE_DIR, "devices.json")
+        self.transfers_file = os.path.join(STATE_DIR, "transfers.json")
         self.load()
 
     def load(self):
@@ -352,6 +354,53 @@ class State:
                 self.devices = json.load(f)
         except (OSError, ValueError):
             self.devices = {}
+        try:
+            with open(self.transfers_file, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            # A previous run may have been killed mid-transfer; never show a
+            # stale transfer as still in progress after a restart.
+            for t in loaded:
+                if t.get("status") in ("sending", "receiving"):
+                    t["status"] = "failed"
+            self.transfers = loaded if isinstance(loaded, list) else []
+        except (OSError, ValueError):
+            self.transfers = []
+
+    def save_transfers(self):
+        try:
+            os.makedirs(STATE_DIR, exist_ok=True)
+            tmp = self.transfers_file + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self.transfers[-500:], f, indent=1)
+            os.replace(tmp, self.transfers_file)
+        except OSError:
+            pass
+
+    def add_transfer(self, direction, name, size, device_id, device_name):
+        # direction: "send" (this device sends a file out) or "receive"
+        # (a device uploads a file in). Status starts as the in-progress
+        # form and is updated to "sent"/"received"/"failed" on completion.
+        t = {"id": secrets.token_hex(6), "direction": direction, "name": name,
+             "size": size, "bytes": 0, "status": "sending" if direction == "send" else "receiving",
+             "device_id": device_id, "device": device_name,
+             "started": time.time(), "updated": time.time()}
+        with self.lock:
+            self.transfers.append(t)
+            self.transfers = self.transfers[-500:]
+        self.save_transfers()
+        return t
+
+    def update_transfer(self, tid, **kw):
+        with self.lock:
+            for t in self.transfers:
+                if t["id"] == tid:
+                    t.update(kw)
+                    t["updated"] = time.time()
+                    break
+        self.save_transfers()
+
+    def finish_transfer(self, tid, status):
+        self.update_transfer(tid, status=status)
 
     def save(self):
         try:
@@ -460,6 +509,15 @@ class Handler(BaseHTTPRequestHandler):
             return "owner"
         _, d = self.device()
         return d["perm"] if d else None
+
+    def transfer_device(self):
+        # (device_id, display name) for the current requester, for transfers.
+        if self.is_owner():
+            return "owner", "Owner (this device)"
+        _, d = self.device()
+        if d:
+            return d["id"], d["name"]
+        return None, self.client_ip()
 
     def require(self, action):
         p = self.perm()
@@ -628,6 +686,16 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
+        if p == "/api/transfers":
+            self.require("read")
+            if self.is_owner():
+                items = list(STATE.transfers)
+            else:
+                _, d = self.device()
+                did = d["id"] if d else None
+                items = [t for t in STATE.transfers if t.get("device_id") == did]
+            return self.send_json({"transfers": list(reversed(items))[:200]})
+
         # ---- everything below needs access
         if p == "/api/list":
             self.require("read")
@@ -687,15 +755,30 @@ class Handler(BaseHTTPRequestHandler):
         if code == 206:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         self.end_headers()
-        with open(full, "rb") as f:
-            f.seek(start)
-            left = length
-            while left > 0:
-                chunk = f.read(min(CHUNK, left))
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                left -= len(chunk)
+        # Previews (inline) are not transfers; real downloads are.
+        tr = None
+        if not inline:
+            did, dname = self.transfer_device()
+            tr = STATE.add_transfer("send", os.path.basename(full), length, did, dname)
+        try:
+            with open(full, "rb") as f:
+                f.seek(start)
+                left = length
+                while left > 0:
+                    chunk = f.read(min(CHUNK, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+                    if tr is not None:
+                        tr["bytes"] += len(chunk)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            if tr is not None:
+                STATE.finish_transfer(tr["id"], "failed")
+            return
+        if tr is not None:
+            tr["bytes"] = length
+            STATE.finish_transfer(tr["id"], "sent")
 
     def send_zip(self, rel):
         full = self.safe_path(rel)
@@ -721,7 +804,20 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(size))
             self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{urllib.parse.quote(name)}.zip")
             self.end_headers()
-            shutil.copyfileobj(tmp, self.wfile, CHUNK)
+            did, dname = self.transfer_device()
+            tr = STATE.add_transfer("send", name + ".zip", size, did, dname)
+            try:
+                while True:
+                    chunk = tmp.read(CHUNK)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    tr["bytes"] += len(chunk)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                STATE.finish_transfer(tr["id"], "failed")
+                return
+            tr["bytes"] = size
+            STATE.finish_transfer(tr["id"], "sent")
 
     # ---- POST routes
     def _post(self):
@@ -759,6 +855,20 @@ class Handler(BaseHTTPRequestHandler):
         if p.startswith("/api/admin/"):
             self.require_owner()
             act = p[len("/api/admin/"):]
+            if act == "shutdown":
+                # Close app: stop sharing and stop the server process (or,
+                # for the packaged desktop apps, the app window via its
+                # server-thread watcher). Reply first, then shut down so
+                # the response actually reaches the dashboard.
+                def _stop():
+                    time.sleep(0.3)
+                    try:
+                        self.server.shutdown()
+                    except Exception:
+                        pass
+                threading.Thread(target=_stop, daemon=True).start()
+                print("  Stopped via dashboard. Nobody can reach your files now.")
+                return self.send_json({"ok": True})
             with STATE.lock:
                 if act == "approve":
                     r = STATE.pending.get(b.get("id"))
@@ -850,6 +960,8 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Missing Content-Length")
         tmp = dest + ".fbpart"
         left = length
+        did, dname = self.transfer_device()
+        tr = STATE.add_transfer("receive", "/".join(parts), length, did, dname)
         try:
             with open(tmp, "wb") as f:
                 while left > 0:
@@ -858,12 +970,18 @@ class Handler(BaseHTTPRequestHandler):
                         break
                     f.write(chunk)
                     left -= len(chunk)
+                    tr["bytes"] += len(chunk)
             if left:
                 raise ConnectionResetError()
             os.replace(tmp, dest)
+        except Exception:
+            STATE.finish_transfer(tr["id"], "failed")
+            raise
         finally:
             if os.path.exists(tmp):
                 os.remove(tmp)
+        tr["bytes"] = length
+        STATE.finish_transfer(tr["id"], "received")
         return self.send_json({"ok": True, "name": os.path.basename(dest)})
 
 
@@ -898,6 +1016,17 @@ input:focus,select:focus{border-color:var(--accent)}
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:grid;place-items:center;z-index:60;padding:16px}
 .modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;width:min(420px,100%)}
 .modal h3{margin:0 0 8px;font-size:17px}.modal input{margin-top:8px}
+.tmodal{width:min(680px,100%);max-height:85vh;display:flex;flex-direction:column}
+.tmodal h3{margin:0 0 12px}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.tabs button{padding:6px 12px;border-radius:999px}.tabs button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.tlist{overflow:auto;flex:1;min-height:120px}
+.trow{display:grid;grid-template-columns:28px 1fr auto;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;background:var(--panel2)}
+.trow .tnm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trow .tmeta{color:var(--muted);font-size:12px}
+.trow .tst{font-size:12px;font-weight:600;text-transform:capitalize}
+.trow .tst.sending,.trow .tst.receiving{color:var(--warn)}.trow .tst.sent,.trow .tst.received{color:var(--ok)}.trow .tst.failed{color:var(--err)}
+.tbar{height:4px;background:var(--panel);border-radius:4px;margin-top:6px;overflow:hidden;grid-column:2/3}.tbar i{display:block;height:100%;background:var(--accent)}
 #toasts{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:90}
 .toast{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--ok);padding:10px 16px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.3);animation:up .2s}
 .toast.err{border-left-color:var(--err)}
@@ -917,6 +1046,22 @@ function fmtSize(n){if(n<1024)return n+' B';const u=['KB','MB','GB','TB'];let i=
 function fmtDate(t){const d=new Date(t*1000);return d.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})+', '+d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'})}
 function ago(t){const s=Math.max(0,Date.now()/1000-t);if(s<60)return 'just now';if(s<3600)return Math.floor(s/60)+' min ago';if(s<86400)return Math.floor(s/3600)+' h ago';return Math.floor(s/86400)+' d ago'}
 function dialog(o){return new Promise(res=>{const bg=document.createElement('div');bg.className='modal-bg';const hasIn=o.input!==undefined;bg.innerHTML=`<div class="modal"><h3>${esc(o.title)}</h3>${o.text?`<p class="muted">${esc(o.text)}</p>`:''}${hasIn?`<input class="full" value="${esc(o.input)}" placeholder="${esc(o.placeholder||'')}">`:''}<div class="row-end"><button class="cancel">Cancel</button><button class="okb ${o.danger?'btn-danger-fill':'btn-primary'}">${esc(o.ok||'OK')}</button></div></div>`;document.body.appendChild(bg);const inp=bg.querySelector('input');const done=v=>{bg.remove();res(v)};bg.querySelector('.cancel').onclick=()=>done(null);bg.querySelector('.okb').onclick=()=>done(inp?inp.value.trim():true);bg.onclick=e=>{if(e.target===bg)done(null)};if(inp){inp.focus();const d=o.input.lastIndexOf('.');inp.setSelectionRange(0,d>0?d:o.input.length);inp.onkeydown=e=>{if(e.key==='Enter')done(inp.value.trim());if(e.key==='Escape')done(null)}}})}
+// ---- Transfers menu: sent / sending, received / receiving (and failed)
+let TFILTER='all',TTIMER=null;
+function tdir(t){return t.direction==='send'?'&#8593;':'&#8595;'}
+function tlabel(t){return t.direction==='send'?(t.status==='sent'?'Sent':t.status==='sending'?'Sending':'Failed'):(t.status==='received'?'Received':t.status==='receiving'?'Receiving':'Failed')}
+async function openTransfers(){
+  closeTransfers();
+  const bg=document.createElement('div');bg.className='modal-bg';bg.id='tmodal-bg';
+  bg.innerHTML=`<div class="modal tmodal"><h3>Transfers</h3><div class="tabs" id="ttabs">${['all','sending','sent','receiving','received','failed'].map(f=>`<button data-f="${f}" class="${f===TFILTER?'on':''}">${f[0].toUpperCase()+f.slice(1)}</button>`).join('')}</div><div class="tlist" id="tlist"><p class="muted">Loading…</p></div><div class="row-end"><button id="tclose">Close</button></div></div>`;
+  document.body.appendChild(bg);
+  const render=async()=>{try{const j=await api('/api/transfers');const list=j.transfers.filter(t=>TFILTER==='all'||t.status===TFILTER);const el=$('#tlist');if(!el)return;if(!list.length){el.innerHTML='<p class="muted">No transfers yet. Downloads appear as Sent, uploads as Received, while they are still running they show as Sending / Receiving.</p>';return}el.innerHTML=list.map(t=>{const pct=t.size?Math.min(100,Math.floor(t.bytes/t.size*100)):0;return `<div class="trow"><span>${tdir(t)}</span><div><div class="tnm">${esc(t.name)}</div><div class="tmeta">${esc(t.device||'')} · ${fmtSize(t.bytes)} of ${fmtSize(t.size)} · ${fmtDate(t.started)}</div>${(t.status==='sending'||t.status==='receiving')?`<div class="tbar"><i style="width:${pct}%"></i></div>`:''}</div><span class="tst ${t.status}">${tlabel(t)}</span></div>`}).join('')}catch(e){const el=$('#tlist');if(el)el.innerHTML='<p class="muted">Could not load transfers.</p>'}};
+  bg.querySelector('#ttabs').onclick=e=>{const b=e.target.closest('button');if(!b)return;TFILTER=b.dataset.f;bg.querySelectorAll('#ttabs button').forEach(x=>x.classList.toggle('on',x===b));render()};
+  bg.querySelector('#tclose').onclick=closeTransfers;bg.onclick=e=>{if(e.target===bg)closeTransfers()};
+  await render();TTIMER=setInterval(render,2000);
+}
+function closeTransfers(){if(TTIMER){clearInterval(TTIMER);TTIMER=null}const bg=document.getElementById('tmodal-bg');if(bg)bg.remove()}
+async function closeApp(){if(!await dialog({title:'Close FileBridge?',text:'Sharing stops immediately. Nobody can reach your files until you start it again.',ok:'Close app',danger:true}))return;try{await post('/api/admin/shutdown')}catch(_){}window.__fbClosed=true;document.body.innerHTML='<div class="center"><div class="card" style="text-align:center"><h2>FileBridge is closed</h2><p class="muted">Sharing has stopped. Start FileBridge again to share this folder.</p></div></div>';try{window.close()}catch(_){}}
 """
 
 LOGO = '<div class="logo"><i>&#8644;</i>FileBridge</div>'
@@ -999,7 +1144,8 @@ main{padding:18px 20px 90px}
 .nav{font-size:28px;padding:8px 14px;background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.15);color:#fff}
 """
 EXP_BODY = f"""<div class="topbar">{LOGO}<span class="chip hide-sm" id="hostchip"></span><span class="chip ok" id="permchip"></span><span class="spacer"></span>
-<a id="dash" hidden href="/admin"><button>Dashboard</button></a><button id="leave" class="btn-ghost" hidden>Disconnect</button></div>
+<button id="transfers">Transfers</button>
+<a id="dash" hidden href="/admin"><button>Dashboard</button></a><button id="closeapp" class="btn-danger" hidden>Close app</button><button id="leave" class="btn-ghost" hidden>Disconnect</button></div>
 <div class="toolbar"><nav id="crumbs"></nav>
 <input id="search" type="search" placeholder="Search this folder">
 <select id="sort" title="Sort"><option value="name">Name</option><option value="date">Newest</option><option value="size">Largest</option><option value="type">Type</option></select>
@@ -1031,7 +1177,8 @@ const go=p=>{location.hash='#/'+enc(p)};
 async function init(){
   ME=await api('/api/whoami');if(!ME.perm){location.href='/';return}
   $('#hostchip').textContent='on '+ME.hostname;$('#permchip').textContent=PERMS[ME.perm];
-  $('#dash').hidden=!ME.owner;$('#leave').hidden=ME.owner;
+  $('#dash').hidden=!ME.owner;$('#leave').hidden=ME.owner;$('#closeapp').hidden=!ME.owner;
+  $('#transfers').onclick=openTransfers;$('#closeapp').onclick=closeApp;
   for(const id of ['#mk','#upf','#upd'])$(id).hidden=!can('upload');
   setView(VIEW);$('#sort').value=SORT;
   window.addEventListener('hashchange',load);load();
@@ -1168,7 +1315,7 @@ h2{margin:0 0 4px;font-size:15px}.sub{color:var(--muted);font-size:13px;margin:0
 .badge{background:var(--warn);color:#111;border-radius:999px;padding:0 8px;font-size:12px;font-weight:700;margin-left:6px}
 .empty{color:var(--muted);padding:6px 0}
 """
-ADM_BODY = f"""<div class="topbar">{LOGO}<span class="chip ok">&#9679; Sharing on</span><span class="spacer"></span><a href="/"><button class="btn-primary">Open my files</button></a></div>
+ADM_BODY = f"""<div class="topbar">{LOGO}<span class="chip ok">&#9679; Sharing on</span><span class="spacer"></span><button id="transfers">Transfers</button><a href="/"><button class="btn-primary">Open my files</button></a><button id="closeapp" class="btn-danger">Close app</button></div>
 <div class="wrap">
 <div class="hero">
  <div class="card"><h2>Connect from another device</h2><p class="sub">On the same Wi-Fi or office network, open this address in any browser (Android, Windows, Ubuntu, iPhone).</p>
@@ -1188,7 +1335,7 @@ const PL={read:'View & download',upload:'View & upload',full:'Full access'};
 const sel=(v,attr)=>`<select ${attr}>${Object.entries(PL).map(([k,l])=>`<option value="${k}"${k===v?' selected':''}>${l}</option>`).join('')}</select>`;
 const initial=n=>esc((n||'?').trim().charAt(0).toUpperCase());
 const dev=ua=>/Android/i.test(ua)?'Android':/iPhone|iPad/i.test(ua)?'iOS':/Windows/i.test(ua)?'Windows':/Mac OS/i.test(ua)?'macOS':/Linux/i.test(ua)?'Linux':'Browser';
-async function refresh(){try{S=await api('/api/admin/state');draw();$('#foot').textContent='FileBridge '+S.version}catch(e){$('#foot').textContent='Lost connection to FileBridge. Is it still running?'}}
+async function refresh(){if(window.__fbClosed)return;try{S=await api('/api/admin/state');draw();$('#foot').textContent='FileBridge '+S.version}catch(e){if(window.__fbClosed)return;const f=$('#foot');if(f)f.textContent='Lost connection to FileBridge. Is it still running?'}}
 function draw(){
   $('#host').textContent=S.hostname;$('#port').textContent=S.port;
   const urls=S.ips.map(ip=>`http://${ip}:${S.port}`);
@@ -1213,6 +1360,7 @@ document.addEventListener('click',async e=>{const t=e.target;try{
 }catch(err){toast(err.message,'err')}});
 document.addEventListener('change',async e=>{const id=e.target.dataset&&e.target.dataset.perm;if(!id)return;try{await post('/api/admin/set-perm',{id,perm:e.target.value});toast('Access updated');refresh()}catch(err){toast(err.message,'err')}});
 $('#setroot').onclick=async()=>{try{await post('/api/admin/set-root',{path:$('#root').value});$('#root').blur();toast('Now sharing '+$('#root').value);refresh()}catch(e){toast(e.message,'err')}};
+$('#transfers').onclick=openTransfers;$('#closeapp').onclick=closeApp;
 $('#root').onkeydown=e=>{if(e.key==='Enter')$('#setroot').click()};
 $('#goPeer').onclick=()=>{let v=$('#peer').value.trim();if(!v)return;if(!/^https?:\/\//.test(v))v='http://'+v;if(!/:\d+(\/|$)/.test(v.replace(/^https?:\/\//,'')))v=v.replace(/\/?$/,'')+':8000';window.open(v,'_blank')};
 $('#peer').onkeydown=e=>{if(e.key==='Enter')$('#goPeer').click()};

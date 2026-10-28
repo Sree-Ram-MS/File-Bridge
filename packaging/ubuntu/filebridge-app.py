@@ -27,16 +27,19 @@ def start_server(base_port=8000):
             httpd = fb.Server(("0.0.0.0", port), fb.Handler)
         except OSError:
             continue
-        threading.Thread(target=httpd.serve_forever, daemon=True).start()
-        return httpd, port
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        return httpd, port, thread
     raise SystemExit("FileBridge: no free port between %d and %d" % (base_port, base_port + 19))
 
 
-def run_without_window(httpd, port):
+def run_without_window(httpd, port, thread):
     # Fallback when GTK/WebKit bindings are missing: open the browser instead.
+    # The thread ends when the dashboard's Close app button stops the server,
+    # so waiting on it (instead of forever) lets that button exit the app too.
     webbrowser.open("http://localhost:%d/admin" % port)
     try:
-        threading.Event().wait()
+        thread.join()
     except KeyboardInterrupt:
         httpd.shutdown()
 
@@ -51,8 +54,8 @@ def main():
             gi.require_version("WebKit2", "4.0")
         from gi.repository import Gio, GLib, Gtk, WebKit2
     except (ImportError, ValueError):
-        httpd, port = start_server()
-        return run_without_window(httpd, port)
+        httpd, port, thread = start_server()
+        return run_without_window(httpd, port, thread)
 
     GLib.set_prgname("filebridge")
     GLib.set_application_name("FileBridge")
@@ -116,6 +119,7 @@ def main():
         return child
 
     def on_close(win, event, app):
+        state["quitting"] = True
         httpd = state["httpd"]
         if httpd:
             threading.Thread(target=httpd.shutdown, daemon=True).start()
@@ -126,7 +130,14 @@ def main():
         if state["win"]:
             state["win"].present()
             return
-        state["httpd"], state["port"] = start_server()
+        state["httpd"], state["port"], thread = start_server()
+        # If the dashboard's Close app button stops the server, close the
+        # window too instead of leaving it on a dead dashboard.
+        def _watch():
+            thread.join()
+            if not state.get("quitting"):
+                GLib.idle_add(app.quit)
+        threading.Thread(target=_watch, daemon=True).start()
         ctx = WebKit2.WebContext.get_default()
         ctx.connect("download-started", on_download, app)
 
