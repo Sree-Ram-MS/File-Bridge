@@ -30,7 +30,7 @@ from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP = "FileBridge"
-VERSION = "0.1.0"
+VERSION = "0.3.0"
 CHUNK = 256 * 1024
 STATE_DIR = os.path.join(os.path.expanduser("~"), ".filebridge")
 LEVELS = {
@@ -66,6 +66,275 @@ def local_ips():
     return [ip for ip in ips if not ip.startswith("127.")]
 
 
+# --------------------------------------------------------------------------- QR code
+# Pure-stdlib QR encoder, kept deliberately small: byte mode, error level M,
+# versions 1-3 only. That covers every dashboard URL (http://<LAN IP>:<port>,
+# at most 28 characters, well under the 42-byte version 3 limit) with no new
+# dependency, so the packaged app still runs on plain Python 3.8+.
+_QR_VERSIONS = {
+    # version: (total codewords, EC codewords, data codewords, alignment centres)
+    1: (26, 10, 16, []),
+    2: (44, 16, 28, [6, 18]),
+    3: (70, 26, 44, [6, 22]),
+}
+_QR_CAPACITY = {1: 14, 2: 26, 3: 42}
+
+
+def _qr_gf_tables():
+    exp = [0] * 512
+    log = [0] * 256
+    x = 1
+    for i in range(255):
+        exp[i] = x
+        log[x] = i
+        x <<= 1
+        if x & 0x100:
+            x ^= 0x11D
+    for i in range(255, 512):
+        exp[i] = exp[i - 255]
+    return exp, log
+
+
+_QR_EXP, _QR_LOG = _qr_gf_tables()
+
+
+def _qr_mul(a, b):
+    return 0 if a == 0 or b == 0 else _QR_EXP[_QR_LOG[a] + _QR_LOG[b]]
+
+
+def _qr_rs_generator(degree):
+    poly = [1]
+    for i in range(degree):
+        nxt = [0] * (len(poly) + 1)
+        for j, c in enumerate(poly):
+            nxt[j] ^= c
+            nxt[j + 1] ^= _qr_mul(c, _QR_EXP[i])
+        poly = nxt
+    return poly
+
+
+def _qr_rs_remainder(data, degree):
+    gen = _qr_rs_generator(degree)
+    msg = list(data) + [0] * degree
+    for i in range(len(data)):
+        coef = msg[i]
+        if coef:
+            for j in range(len(gen)):
+                msg[i + j] ^= _qr_mul(gen[j], coef)
+    return msg[-degree:]
+
+
+def _qr_format_bits(mask):
+    # Error level M = 00, followed by the 3 mask bits, BCH + 0x5412 mask.
+    data = mask  # (0b00 << 3) | mask
+    rem = data
+    for _ in range(10):
+        rem = (rem << 1) ^ ((rem >> 9) * 0x537)
+    return ((data << 10) | rem) ^ 0x5412
+
+
+def _qr_build_matrix(text):
+    data = text.encode("utf-8")
+    version = next((v for v in (1, 2, 3) if len(data) <= _QR_CAPACITY[v]), None)
+    if version is None:
+        raise ValueError("Text too long for QR code")
+    total, ec_len, data_len, align = _QR_VERSIONS[version]
+    bits = []
+    bits.extend([0, 1, 0, 0])  # byte mode
+    for i in range(7, -1, -1):
+        bits.append((len(data) >> i) & 1)
+    for byte in data:
+        for i in range(7, -1, -1):
+            bits.append((byte >> i) & 1)
+    bits.extend([0] * min(4, data_len * 8 - len(bits)))
+    while len(bits) % 8:
+        bits.append(0)
+    codewords = []
+    for i in range(0, len(bits), 8):
+        v = 0
+        for b in bits[i:i + 8]:
+            v = (v << 1) | b
+        codewords.append(v)
+    pads = (0xEC, 0x11)
+    pi = 0
+    while len(codewords) < data_len:
+        codewords.append(pads[pi % 2])
+        pi += 1
+    all_cw = codewords + _qr_rs_remainder(codewords, ec_len)
+    all_bits = []
+    for cw in all_cw:
+        for i in range(7, -1, -1):
+            all_bits.append((cw >> i) & 1)
+
+    size = 17 + 4 * version
+    mat = [[None] * size for _ in range(size)]
+    func = [[False] * size for _ in range(size)]
+
+    def set_func(r, c, v):
+        mat[r][c] = v
+        func[r][c] = True
+
+    finder = [[1, 1, 1, 1, 1, 1, 1], [1, 0, 0, 0, 0, 0, 1], [1, 0, 1, 1, 1, 0, 1],
+              [1, 0, 1, 1, 1, 0, 1], [1, 0, 1, 1, 1, 0, 1], [1, 0, 0, 0, 0, 0, 1],
+              [1, 1, 1, 1, 1, 1, 1]]
+    for r0, c0 in ((0, 0), (0, size - 7), (size - 7, 0)):
+        for r in range(7):
+            for c in range(7):
+                set_func(r0 + r, c0 + c, finder[r][c])
+        # One white separator row and column around each finder pattern.
+        if r0 == 0:  # top finders: separator row below
+            for c in range(8):
+                set_func(7, c0 + c if c0 == 0 else size - 8 + c, 0)
+        else:  # bottom-left: separator row above
+            for c in range(8):
+                set_func(size - 8, c, 0)
+        if c0 == 0:  # left finders: separator column to the right
+            start = 0 if r0 == 0 else size - 8
+            for r in range(8):
+                set_func(start + r, 7, 0)
+        else:  # top-right: separator column to the left
+            for r in range(8):
+                set_func(r, size - 8, 0)
+    for i in range(8, size - 8):
+        set_func(6, i, 1 if i % 2 == 0 else 0)
+        set_func(i, 6, 1 if i % 2 == 0 else 0)
+    align_pat = [[1, 1, 1, 1, 1], [1, 0, 0, 0, 1], [1, 0, 1, 0, 1],
+                 [1, 0, 0, 0, 1], [1, 1, 1, 1, 1]]
+    for r in align:
+        for c in align:
+            if (r <= 8 and c <= 8) or (r <= 8 and c >= size - 9) or (r >= size - 9 and c <= 8):
+                continue
+            for dr in range(-2, 3):
+                for dc in range(-2, 3):
+                    set_func(r + dr, c + dc, align_pat[dr + 2][dc + 2])
+    # Reserve format-info cells and the dark module; values are filled later.
+    for c in range(9):
+        if c != 6:
+            set_func(8, c, 0)
+    for r in range(9):
+        if r != 6:
+            set_func(r, 8, 0)
+    for c in range(8):
+        set_func(8, size - 8 + c, 0)
+    for r in range(7):
+        set_func(size - 7 + r, 8, 0)
+    set_func(4 * version + 9, 8, 1)
+
+    # Data placement, zig-zag from the bottom right.
+    i = 0
+    upward = True
+    col = size - 1
+    while col > 0:
+        if col == 6:
+            col -= 1
+        for vert in range(size):
+            row = size - 1 - vert if upward else vert
+            for j in range(2):
+                cc = col - j
+                if not func[row][cc]:
+                    mat[row][cc] = all_bits[i] if i < len(all_bits) else 0
+                    i += 1
+        upward = not upward
+        col -= 2
+
+    def mask_ok(mask, r, c):
+        if mask == 0:
+            return (r + c) % 2 == 0
+        if mask == 1:
+            return r % 2 == 0
+        if mask == 2:
+            return c % 3 == 0
+        if mask == 3:
+            return (r + c) % 3 == 0
+        if mask == 4:
+            return (r // 2 + c // 3) % 2 == 0
+        if mask == 5:
+            return (r * c) % 2 + (r * c) % 3 == 0
+        if mask == 6:
+            return ((r * c) % 2 + (r * c) % 3) % 2 == 0
+        return ((r + c) % 2 + (r * c) % 3) % 2 == 0
+
+    def penalty(m):
+        score = 0
+        for r in range(size):
+            run = 1
+            for c in range(1, size):
+                if m[r][c] == m[r][c - 1]:
+                    run += 1
+                else:
+                    if run >= 5:
+                        score += 3 + run - 5
+                    run = 1
+            if run >= 5:
+                score += 3 + run - 5
+        for c in range(size):
+            run = 1
+            for r in range(1, size):
+                if m[r][c] == m[r - 1][c]:
+                    run += 1
+                else:
+                    if run >= 5:
+                        score += 3 + run - 5
+                    run = 1
+            if run >= 5:
+                score += 3 + run - 5
+        for r in range(size - 1):
+            for c in range(size - 1):
+                if m[r][c] == m[r + 1][c] == m[r][c + 1] == m[r + 1][c + 1]:
+                    score += 3
+        for line in ([m[r] for r in range(size)] + [[m[r][c] for r in range(size)] for c in range(size)]):
+            for j in range(len(line) - 10):
+                seg = line[j:j + 11]
+                if seg == [1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0] or seg == [0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1]:
+                    score += 40
+        dark = sum(sum(row) for row in m)
+        # floor(|dark% - 50| / 5) * 10, with dark% = dark * 100 / size**2.
+        score += (abs(dark * 20 - size * size * 10) // (size * size)) * 10
+        return score
+
+    best = None
+    for mask in range(8):
+        trial = [row[:] for row in mat]
+        for r in range(size):
+            for c in range(size):
+                if not func[r][c] and mask_ok(mask, r, c):
+                    trial[r][c] ^= 1
+        fmt = _qr_format_bits(mask)
+        # Format info placement (ISO 18004, section 7.9): the vertical
+        # copy beside the top-left finder carries bits 0-7 top to bottom
+        # (skipping the timing row), the horizontal copy carries bits
+        # 14-7 left to right (skipping the timing column), and the two
+        # second copies mirror them at the other finders.
+        for bit, row in enumerate((0, 1, 2, 3, 4, 5, 7, 8)):
+            trial[row][8] = (fmt >> bit) & 1
+        for bit, col in zip(range(7, 15), (8, 7, 5, 4, 3, 2, 1, 0)):
+            trial[8][col] = (fmt >> bit) & 1
+        for bit in range(8):
+            trial[8][size - 1 - bit] = (fmt >> bit) & 1
+        # Bottom-left copy: bits 8-14 only; the cell just above it
+        # (row size-8, column 8) is the dark module, set earlier.
+        for bit in range(8, 15):
+            trial[size - 15 + bit][8] = (fmt >> bit) & 1
+        sc = penalty(trial)
+        if best is None or sc < best[0]:
+            best = (sc, trial)
+    return best[1]
+
+
+def qr_svg(text):
+    mat = _qr_build_matrix(text)
+    size = len(mat)
+    total = size + 8  # 4-module quiet zone on each side
+    parts = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" shape-rendering="crispEdges">' % (total, total),
+             '<rect width="%d" height="%d" fill="white"/>' % (total, total), '<path fill="black" d="']
+    for r in range(size):
+        for c in range(size):
+            if mat[r][c]:
+                parts.append("M%d %dh1v1h-1z" % (c + 4, r + 4))
+    parts.append('"/></svg>')
+    return "".join(parts)
+
+
 class State:
     def __init__(self, root, port):
         self.root = os.path.realpath(root)
@@ -73,8 +342,10 @@ class State:
         self.lock = threading.Lock()
         self.pending = {}   # request id -> info
         self.devices = {}   # token -> info
+        self.transfers = []  # transfer dicts, newest last; see add_transfer
         self.owner_ips = set(local_ips())
         self.file = os.path.join(STATE_DIR, "devices.json")
+        self.transfers_file = os.path.join(STATE_DIR, "transfers.json")
         self.load()
 
     def load(self):
@@ -83,6 +354,53 @@ class State:
                 self.devices = json.load(f)
         except (OSError, ValueError):
             self.devices = {}
+        try:
+            with open(self.transfers_file, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            # A previous run may have been killed mid-transfer; never show a
+            # stale transfer as still in progress after a restart.
+            for t in loaded:
+                if t.get("status") in ("sending", "receiving"):
+                    t["status"] = "failed"
+            self.transfers = loaded if isinstance(loaded, list) else []
+        except (OSError, ValueError):
+            self.transfers = []
+
+    def save_transfers(self):
+        try:
+            os.makedirs(STATE_DIR, exist_ok=True)
+            tmp = self.transfers_file + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self.transfers[-500:], f, indent=1)
+            os.replace(tmp, self.transfers_file)
+        except OSError:
+            pass
+
+    def add_transfer(self, direction, name, size, device_id, device_name):
+        # direction: "send" (this device sends a file out) or "receive"
+        # (a device uploads a file in). Status starts as the in-progress
+        # form and is updated to "sent"/"received"/"failed" on completion.
+        t = {"id": secrets.token_hex(6), "direction": direction, "name": name,
+             "size": size, "bytes": 0, "status": "sending" if direction == "send" else "receiving",
+             "device_id": device_id, "device": device_name,
+             "started": time.time(), "updated": time.time()}
+        with self.lock:
+            self.transfers.append(t)
+            self.transfers = self.transfers[-500:]
+        self.save_transfers()
+        return t
+
+    def update_transfer(self, tid, **kw):
+        with self.lock:
+            for t in self.transfers:
+                if t["id"] == tid:
+                    t.update(kw)
+                    t["updated"] = time.time()
+                    break
+        self.save_transfers()
+
+    def finish_transfer(self, tid, status):
+        self.update_transfer(tid, status=status)
 
     def save(self):
         try:
@@ -191,6 +509,15 @@ class Handler(BaseHTTPRequestHandler):
             return "owner"
         _, d = self.device()
         return d["perm"] if d else None
+
+    def transfer_device(self):
+        # (device_id, display name) for the current requester, for transfers.
+        if self.is_owner():
+            return "owner", "Owner (this device)"
+        _, d = self.device()
+        if d:
+            return d["id"], d["name"]
+        return None, self.client_ip()
 
     def require(self, action):
         p = self.perm()
@@ -340,6 +667,34 @@ class Handler(BaseHTTPRequestHandler):
                                    "ips": sorted(STATE.owner_ips, key=lambda x: (not x.startswith("192.168."), x)),
                                    "hostname": socket.gethostname(), "pending": pend,
                                    "devices": sorted(devs, key=lambda d: -d["last_seen"])})
+        if p == "/qr.svg":
+            # Owner-only: the QR just encodes a link the dashboard already
+            # shows, but only generate it for this server's own LAN address.
+            self.require_owner()
+            raw = qp("u")
+            u = urllib.parse.urlsplit(raw)
+            allowed = set(local_ips()) | set(STATE.owner_ips)
+            if (u.scheme != "http" or u.hostname not in allowed or u.port != STATE.port
+                    or u.path not in ("", "/") or u.query or u.fragment or u.username or u.password):
+                raise ValueError("Not a FileBridge address for this device")
+            body = qr_svg(f"http://{u.hostname}:{STATE.port}").encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if p == "/api/transfers":
+            self.require("read")
+            if self.is_owner():
+                items = list(STATE.transfers)
+            else:
+                _, d = self.device()
+                did = d["id"] if d else None
+                items = [t for t in STATE.transfers if t.get("device_id") == did]
+            return self.send_json({"transfers": list(reversed(items))[:200]})
 
         # ---- everything below needs access
         if p == "/api/list":
@@ -400,15 +755,30 @@ class Handler(BaseHTTPRequestHandler):
         if code == 206:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         self.end_headers()
-        with open(full, "rb") as f:
-            f.seek(start)
-            left = length
-            while left > 0:
-                chunk = f.read(min(CHUNK, left))
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                left -= len(chunk)
+        # Previews (inline) are not transfers; real downloads are.
+        tr = None
+        if not inline:
+            did, dname = self.transfer_device()
+            tr = STATE.add_transfer("send", os.path.basename(full), length, did, dname)
+        try:
+            with open(full, "rb") as f:
+                f.seek(start)
+                left = length
+                while left > 0:
+                    chunk = f.read(min(CHUNK, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+                    if tr is not None:
+                        tr["bytes"] += len(chunk)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            if tr is not None:
+                STATE.finish_transfer(tr["id"], "failed")
+            return
+        if tr is not None:
+            tr["bytes"] = length
+            STATE.finish_transfer(tr["id"], "sent")
 
     def send_zip(self, rel):
         full = self.safe_path(rel)
@@ -434,7 +804,20 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(size))
             self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{urllib.parse.quote(name)}.zip")
             self.end_headers()
-            shutil.copyfileobj(tmp, self.wfile, CHUNK)
+            did, dname = self.transfer_device()
+            tr = STATE.add_transfer("send", name + ".zip", size, did, dname)
+            try:
+                while True:
+                    chunk = tmp.read(CHUNK)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    tr["bytes"] += len(chunk)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                STATE.finish_transfer(tr["id"], "failed")
+                return
+            tr["bytes"] = size
+            STATE.finish_transfer(tr["id"], "sent")
 
     # ---- POST routes
     def _post(self):
@@ -472,6 +855,20 @@ class Handler(BaseHTTPRequestHandler):
         if p.startswith("/api/admin/"):
             self.require_owner()
             act = p[len("/api/admin/"):]
+            if act == "shutdown":
+                # Close app: stop sharing and stop the server process (or,
+                # for the packaged desktop apps, the app window via its
+                # server-thread watcher). Reply first, then shut down so
+                # the response actually reaches the dashboard.
+                def _stop():
+                    time.sleep(0.3)
+                    try:
+                        self.server.shutdown()
+                    except Exception:
+                        pass
+                threading.Thread(target=_stop, daemon=True).start()
+                print("  Stopped via dashboard. Nobody can reach your files now.")
+                return self.send_json({"ok": True})
             with STATE.lock:
                 if act == "approve":
                     r = STATE.pending.get(b.get("id"))
@@ -563,6 +960,8 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Missing Content-Length")
         tmp = dest + ".fbpart"
         left = length
+        did, dname = self.transfer_device()
+        tr = STATE.add_transfer("receive", "/".join(parts), length, did, dname)
         try:
             with open(tmp, "wb") as f:
                 while left > 0:
@@ -571,12 +970,18 @@ class Handler(BaseHTTPRequestHandler):
                         break
                     f.write(chunk)
                     left -= len(chunk)
+                    tr["bytes"] += len(chunk)
             if left:
                 raise ConnectionResetError()
             os.replace(tmp, dest)
+        except Exception:
+            STATE.finish_transfer(tr["id"], "failed")
+            raise
         finally:
             if os.path.exists(tmp):
                 os.remove(tmp)
+        tr["bytes"] = length
+        STATE.finish_transfer(tr["id"], "received")
         return self.send_json({"ok": True, "name": os.path.basename(dest)})
 
 
@@ -611,6 +1016,17 @@ input:focus,select:focus{border-color:var(--accent)}
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:grid;place-items:center;z-index:60;padding:16px}
 .modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;width:min(420px,100%)}
 .modal h3{margin:0 0 8px;font-size:17px}.modal input{margin-top:8px}
+.tmodal{width:min(680px,100%);max-height:85vh;display:flex;flex-direction:column}
+.tmodal h3{margin:0 0 12px}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.tabs button{padding:6px 12px;border-radius:999px}.tabs button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.tlist{overflow:auto;flex:1;min-height:120px}
+.trow{display:grid;grid-template-columns:28px 1fr auto;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;background:var(--panel2)}
+.trow .tnm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trow .tmeta{color:var(--muted);font-size:12px}
+.trow .tst{font-size:12px;font-weight:600;text-transform:capitalize}
+.trow .tst.sending,.trow .tst.receiving{color:var(--warn)}.trow .tst.sent,.trow .tst.received{color:var(--ok)}.trow .tst.failed{color:var(--err)}
+.tbar{height:4px;background:var(--panel);border-radius:4px;margin-top:6px;overflow:hidden;grid-column:2/3}.tbar i{display:block;height:100%;background:var(--accent)}
 #toasts{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:90}
 .toast{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--ok);padding:10px 16px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.3);animation:up .2s}
 .toast.err{border-left-color:var(--err)}
@@ -630,6 +1046,22 @@ function fmtSize(n){if(n<1024)return n+' B';const u=['KB','MB','GB','TB'];let i=
 function fmtDate(t){const d=new Date(t*1000);return d.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})+', '+d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'})}
 function ago(t){const s=Math.max(0,Date.now()/1000-t);if(s<60)return 'just now';if(s<3600)return Math.floor(s/60)+' min ago';if(s<86400)return Math.floor(s/3600)+' h ago';return Math.floor(s/86400)+' d ago'}
 function dialog(o){return new Promise(res=>{const bg=document.createElement('div');bg.className='modal-bg';const hasIn=o.input!==undefined;bg.innerHTML=`<div class="modal"><h3>${esc(o.title)}</h3>${o.text?`<p class="muted">${esc(o.text)}</p>`:''}${hasIn?`<input class="full" value="${esc(o.input)}" placeholder="${esc(o.placeholder||'')}">`:''}<div class="row-end"><button class="cancel">Cancel</button><button class="okb ${o.danger?'btn-danger-fill':'btn-primary'}">${esc(o.ok||'OK')}</button></div></div>`;document.body.appendChild(bg);const inp=bg.querySelector('input');const done=v=>{bg.remove();res(v)};bg.querySelector('.cancel').onclick=()=>done(null);bg.querySelector('.okb').onclick=()=>done(inp?inp.value.trim():true);bg.onclick=e=>{if(e.target===bg)done(null)};if(inp){inp.focus();const d=o.input.lastIndexOf('.');inp.setSelectionRange(0,d>0?d:o.input.length);inp.onkeydown=e=>{if(e.key==='Enter')done(inp.value.trim());if(e.key==='Escape')done(null)}}})}
+// ---- Transfers menu: sent / sending, received / receiving (and failed)
+let TFILTER='all',TTIMER=null;
+function tdir(t){return t.direction==='send'?'&#8593;':'&#8595;'}
+function tlabel(t){return t.direction==='send'?(t.status==='sent'?'Sent':t.status==='sending'?'Sending':'Failed'):(t.status==='received'?'Received':t.status==='receiving'?'Receiving':'Failed')}
+async function openTransfers(){
+  closeTransfers();
+  const bg=document.createElement('div');bg.className='modal-bg';bg.id='tmodal-bg';
+  bg.innerHTML=`<div class="modal tmodal"><h3>Transfers</h3><div class="tabs" id="ttabs">${['all','sending','sent','receiving','received','failed'].map(f=>`<button data-f="${f}" class="${f===TFILTER?'on':''}">${f[0].toUpperCase()+f.slice(1)}</button>`).join('')}</div><div class="tlist" id="tlist"><p class="muted">Loading…</p></div><div class="row-end"><button id="tclose">Close</button></div></div>`;
+  document.body.appendChild(bg);
+  const render=async()=>{try{const j=await api('/api/transfers');const list=j.transfers.filter(t=>TFILTER==='all'||t.status===TFILTER);const el=$('#tlist');if(!el)return;if(!list.length){el.innerHTML='<p class="muted">No transfers yet. Downloads appear as Sent, uploads as Received, while they are still running they show as Sending / Receiving.</p>';return}el.innerHTML=list.map(t=>{const pct=t.size?Math.min(100,Math.floor(t.bytes/t.size*100)):0;return `<div class="trow"><span>${tdir(t)}</span><div><div class="tnm">${esc(t.name)}</div><div class="tmeta">${esc(t.device||'')} · ${fmtSize(t.bytes)} of ${fmtSize(t.size)} · ${fmtDate(t.started)}</div>${(t.status==='sending'||t.status==='receiving')?`<div class="tbar"><i style="width:${pct}%"></i></div>`:''}</div><span class="tst ${t.status}">${tlabel(t)}</span></div>`}).join('')}catch(e){const el=$('#tlist');if(el)el.innerHTML='<p class="muted">Could not load transfers.</p>'}};
+  bg.querySelector('#ttabs').onclick=e=>{const b=e.target.closest('button');if(!b)return;TFILTER=b.dataset.f;bg.querySelectorAll('#ttabs button').forEach(x=>x.classList.toggle('on',x===b));render()};
+  bg.querySelector('#tclose').onclick=closeTransfers;bg.onclick=e=>{if(e.target===bg)closeTransfers()};
+  await render();TTIMER=setInterval(render,2000);
+}
+function closeTransfers(){if(TTIMER){clearInterval(TTIMER);TTIMER=null}const bg=document.getElementById('tmodal-bg');if(bg)bg.remove()}
+async function closeApp(){if(!await dialog({title:'Close FileBridge?',text:'Sharing stops immediately. Nobody can reach your files until you start it again.',ok:'Close app',danger:true}))return;try{await post('/api/admin/shutdown')}catch(_){}window.__fbClosed=true;document.body.innerHTML='<div class="center"><div class="card" style="text-align:center"><h2>FileBridge is closed</h2><p class="muted">Sharing has stopped. Start FileBridge again to share this folder.</p></div></div>';try{window.close()}catch(_){}}
 """
 
 LOGO = '<div class="logo"><i>&#8644;</i>FileBridge</div>'
@@ -712,7 +1144,8 @@ main{padding:18px 20px 90px}
 .nav{font-size:28px;padding:8px 14px;background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.15);color:#fff}
 """
 EXP_BODY = f"""<div class="topbar">{LOGO}<span class="chip hide-sm" id="hostchip"></span><span class="chip ok" id="permchip"></span><span class="spacer"></span>
-<a id="dash" hidden href="/admin"><button>Dashboard</button></a><button id="leave" class="btn-ghost" hidden>Disconnect</button></div>
+<button id="transfers">Transfers</button>
+<a id="dash" hidden href="/admin"><button>Dashboard</button></a><button id="closeapp" class="btn-danger" hidden>Close app</button><button id="leave" class="btn-ghost" hidden>Disconnect</button></div>
 <div class="toolbar"><nav id="crumbs"></nav>
 <input id="search" type="search" placeholder="Search this folder">
 <select id="sort" title="Sort"><option value="name">Name</option><option value="date">Newest</option><option value="size">Largest</option><option value="type">Type</option></select>
@@ -744,7 +1177,8 @@ const go=p=>{location.hash='#/'+enc(p)};
 async function init(){
   ME=await api('/api/whoami');if(!ME.perm){location.href='/';return}
   $('#hostchip').textContent='on '+ME.hostname;$('#permchip').textContent=PERMS[ME.perm];
-  $('#dash').hidden=!ME.owner;$('#leave').hidden=ME.owner;
+  $('#dash').hidden=!ME.owner;$('#leave').hidden=ME.owner;$('#closeapp').hidden=!ME.owner;
+  $('#transfers').onclick=openTransfers;$('#closeapp').onclick=closeApp;
   for(const id of ['#mk','#upf','#upd'])$(id).hidden=!can('upload');
   setView(VIEW);$('#sort').value=SORT;
   window.addEventListener('hashchange',load);load();
@@ -868,6 +1302,10 @@ ADM_CSS = r"""
 h2{margin:0 0 4px;font-size:15px}.sub{color:var(--muted);font-size:13px;margin:0 0 14px}
 .url{display:flex;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:8px}
 .url code{flex:1;font:600 22px/1.2 ui-monospace,Menlo,Consolas,monospace;color:var(--accent);word-break:break-all}
+.qr{display:flex;gap:14px;align-items:center;margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel2)}
+.qr img{width:150px;height:150px;flex:none;background:#fff;padding:6px;border-radius:8px}
+.qr .qtxt{font-size:13px;color:var(--muted)}
+.qr .qtxt b{display:block;color:var(--text);font-size:14px;margin-bottom:4px}
 .kv{display:flex;gap:8px;align-items:center;margin-top:8px}.kv input{flex:1}
 .list .it{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--line);flex-wrap:wrap}.list .it:first-child{border-top:0}
 .av{width:38px;height:38px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;font-weight:700;color:var(--accent);flex:none;position:relative}
@@ -877,11 +1315,11 @@ h2{margin:0 0 4px;font-size:15px}.sub{color:var(--muted);font-size:13px;margin:0
 .badge{background:var(--warn);color:#111;border-radius:999px;padding:0 8px;font-size:12px;font-weight:700;margin-left:6px}
 .empty{color:var(--muted);padding:6px 0}
 """
-ADM_BODY = f"""<div class="topbar">{LOGO}<span class="chip ok">&#9679; Sharing on</span><span class="spacer"></span><a href="/"><button class="btn-primary">Open my files</button></a></div>
+ADM_BODY = f"""<div class="topbar">{LOGO}<span class="chip ok">&#9679; Sharing on</span><span class="spacer"></span><button id="transfers">Transfers</button><a href="/"><button class="btn-primary">Open my files</button></a><button id="closeapp" class="btn-danger">Close app</button></div>
 <div class="wrap">
 <div class="hero">
  <div class="card"><h2>Connect from another device</h2><p class="sub">On the same Wi-Fi or office network, open this address in any browser (Android, Windows, Ubuntu, iPhone).</p>
-  <div id="urls"></div><p class="muted" style="margin:6px 0 0;font-size:12px">Device name <b id="host"></b> · port <b id="port"></b></p></div>
+  <div id="urls"></div><div id="qr"></div><p class="muted" style="margin:6px 0 0;font-size:12px">Device name <b id="host"></b> · port <b id="port"></b></p></div>
  <div class="card"><h2>Shared folder</h2><p class="sub">Approved devices only see what's inside this folder.</p>
   <div class="kv"><input id="root" spellcheck="false"><button id="setroot">Change</button></div>
   <h2 style="margin-top:20px">Open someone else's files</h2><p class="sub">If a colleague is running FileBridge too, enter their address.</p>
@@ -897,12 +1335,14 @@ const PL={read:'View & download',upload:'View & upload',full:'Full access'};
 const sel=(v,attr)=>`<select ${attr}>${Object.entries(PL).map(([k,l])=>`<option value="${k}"${k===v?' selected':''}>${l}</option>`).join('')}</select>`;
 const initial=n=>esc((n||'?').trim().charAt(0).toUpperCase());
 const dev=ua=>/Android/i.test(ua)?'Android':/iPhone|iPad/i.test(ua)?'iOS':/Windows/i.test(ua)?'Windows':/Mac OS/i.test(ua)?'macOS':/Linux/i.test(ua)?'Linux':'Browser';
-async function refresh(){try{S=await api('/api/admin/state');draw();$('#foot').textContent='FileBridge '+S.version}catch(e){$('#foot').textContent='Lost connection to FileBridge. Is it still running?'}}
+async function refresh(){if(window.__fbClosed)return;try{S=await api('/api/admin/state');draw();$('#foot').textContent='FileBridge '+S.version}catch(e){if(window.__fbClosed)return;const f=$('#foot');if(f)f.textContent='Lost connection to FileBridge. Is it still running?'}}
 function draw(){
   $('#host').textContent=S.hostname;$('#port').textContent=S.port;
   const urls=S.ips.map(ip=>`http://${ip}:${S.port}`);
   const uh=urls.length?urls.map(u=>`<div class="url"><code>${esc(u)}</code><button data-copy="${esc(u)}">Copy</button></div>`).join(''):'<div class="url"><code style="color:var(--warn);font-size:15px">No network found. Connect to Wi-Fi or LAN.</code></div>';
   if($('#urls').dataset.h!==uh){$('#urls').innerHTML=uh;$('#urls').dataset.h=uh}
+  const qh=urls.length?`<div class="qr"><img alt="QR code for ${esc(urls[0])}" src="/qr.svg?u=${encodeURIComponent(urls[0])}"><div class="qtxt"><b>Scan to connect</b>Point a phone camera at this code to open ${esc(urls[0])} — no typing needed.</div></div>`:'';
+  if($('#qr').dataset.h!==qh){$('#qr').innerHTML=qh;$('#qr').dataset.h=qh}
   if(document.activeElement!==$('#root'))$('#root').value=S.root;
   const sp=JSON.stringify(S.pending.map(r=>[r.id,r.name]));
   if(sp!==sigP){sigP=sp;$('#reqcard').hidden=!S.pending.length;$('#reqn').textContent=S.pending.length;
@@ -920,6 +1360,7 @@ document.addEventListener('click',async e=>{const t=e.target;try{
 }catch(err){toast(err.message,'err')}});
 document.addEventListener('change',async e=>{const id=e.target.dataset&&e.target.dataset.perm;if(!id)return;try{await post('/api/admin/set-perm',{id,perm:e.target.value});toast('Access updated');refresh()}catch(err){toast(err.message,'err')}});
 $('#setroot').onclick=async()=>{try{await post('/api/admin/set-root',{path:$('#root').value});$('#root').blur();toast('Now sharing '+$('#root').value);refresh()}catch(e){toast(e.message,'err')}};
+$('#transfers').onclick=openTransfers;$('#closeapp').onclick=closeApp;
 $('#root').onkeydown=e=>{if(e.key==='Enter')$('#setroot').click()};
 $('#goPeer').onclick=()=>{let v=$('#peer').value.trim();if(!v)return;if(!/^https?:\/\//.test(v))v='http://'+v;if(!/:\d+(\/|$)/.test(v.replace(/^https?:\/\//,'')))v=v.replace(/\/?$/,'')+':8000';window.open(v,'_blank')};
 $('#peer').onkeydown=e=>{if(e.key==='Enter')$('#goPeer').click()};
