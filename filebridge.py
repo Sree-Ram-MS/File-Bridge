@@ -30,7 +30,7 @@ from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP = "FileBridge"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 CHUNK = 256 * 1024
 STATE_DIR = os.path.join(os.path.expanduser("~"), ".filebridge")
 LEVELS = {
@@ -64,6 +64,275 @@ def local_ips():
     except OSError:
         pass
     return [ip for ip in ips if not ip.startswith("127.")]
+
+
+# --------------------------------------------------------------------------- QR code
+# Pure-stdlib QR encoder, kept deliberately small: byte mode, error level M,
+# versions 1-3 only. That covers every dashboard URL (http://<LAN IP>:<port>,
+# at most 28 characters, well under the 42-byte version 3 limit) with no new
+# dependency, so the packaged app still runs on plain Python 3.8+.
+_QR_VERSIONS = {
+    # version: (total codewords, EC codewords, data codewords, alignment centres)
+    1: (26, 10, 16, []),
+    2: (44, 16, 28, [6, 18]),
+    3: (70, 26, 44, [6, 22]),
+}
+_QR_CAPACITY = {1: 14, 2: 26, 3: 42}
+
+
+def _qr_gf_tables():
+    exp = [0] * 512
+    log = [0] * 256
+    x = 1
+    for i in range(255):
+        exp[i] = x
+        log[x] = i
+        x <<= 1
+        if x & 0x100:
+            x ^= 0x11D
+    for i in range(255, 512):
+        exp[i] = exp[i - 255]
+    return exp, log
+
+
+_QR_EXP, _QR_LOG = _qr_gf_tables()
+
+
+def _qr_mul(a, b):
+    return 0 if a == 0 or b == 0 else _QR_EXP[_QR_LOG[a] + _QR_LOG[b]]
+
+
+def _qr_rs_generator(degree):
+    poly = [1]
+    for i in range(degree):
+        nxt = [0] * (len(poly) + 1)
+        for j, c in enumerate(poly):
+            nxt[j] ^= c
+            nxt[j + 1] ^= _qr_mul(c, _QR_EXP[i])
+        poly = nxt
+    return poly
+
+
+def _qr_rs_remainder(data, degree):
+    gen = _qr_rs_generator(degree)
+    msg = list(data) + [0] * degree
+    for i in range(len(data)):
+        coef = msg[i]
+        if coef:
+            for j in range(len(gen)):
+                msg[i + j] ^= _qr_mul(gen[j], coef)
+    return msg[-degree:]
+
+
+def _qr_format_bits(mask):
+    # Error level M = 00, followed by the 3 mask bits, BCH + 0x5412 mask.
+    data = mask  # (0b00 << 3) | mask
+    rem = data
+    for _ in range(10):
+        rem = (rem << 1) ^ ((rem >> 9) * 0x537)
+    return ((data << 10) | rem) ^ 0x5412
+
+
+def _qr_build_matrix(text):
+    data = text.encode("utf-8")
+    version = next((v for v in (1, 2, 3) if len(data) <= _QR_CAPACITY[v]), None)
+    if version is None:
+        raise ValueError("Text too long for QR code")
+    total, ec_len, data_len, align = _QR_VERSIONS[version]
+    bits = []
+    bits.extend([0, 1, 0, 0])  # byte mode
+    for i in range(7, -1, -1):
+        bits.append((len(data) >> i) & 1)
+    for byte in data:
+        for i in range(7, -1, -1):
+            bits.append((byte >> i) & 1)
+    bits.extend([0] * min(4, data_len * 8 - len(bits)))
+    while len(bits) % 8:
+        bits.append(0)
+    codewords = []
+    for i in range(0, len(bits), 8):
+        v = 0
+        for b in bits[i:i + 8]:
+            v = (v << 1) | b
+        codewords.append(v)
+    pads = (0xEC, 0x11)
+    pi = 0
+    while len(codewords) < data_len:
+        codewords.append(pads[pi % 2])
+        pi += 1
+    all_cw = codewords + _qr_rs_remainder(codewords, ec_len)
+    all_bits = []
+    for cw in all_cw:
+        for i in range(7, -1, -1):
+            all_bits.append((cw >> i) & 1)
+
+    size = 17 + 4 * version
+    mat = [[None] * size for _ in range(size)]
+    func = [[False] * size for _ in range(size)]
+
+    def set_func(r, c, v):
+        mat[r][c] = v
+        func[r][c] = True
+
+    finder = [[1, 1, 1, 1, 1, 1, 1], [1, 0, 0, 0, 0, 0, 1], [1, 0, 1, 1, 1, 0, 1],
+              [1, 0, 1, 1, 1, 0, 1], [1, 0, 1, 1, 1, 0, 1], [1, 0, 0, 0, 0, 0, 1],
+              [1, 1, 1, 1, 1, 1, 1]]
+    for r0, c0 in ((0, 0), (0, size - 7), (size - 7, 0)):
+        for r in range(7):
+            for c in range(7):
+                set_func(r0 + r, c0 + c, finder[r][c])
+        # One white separator row and column around each finder pattern.
+        if r0 == 0:  # top finders: separator row below
+            for c in range(8):
+                set_func(7, c0 + c if c0 == 0 else size - 8 + c, 0)
+        else:  # bottom-left: separator row above
+            for c in range(8):
+                set_func(size - 8, c, 0)
+        if c0 == 0:  # left finders: separator column to the right
+            start = 0 if r0 == 0 else size - 8
+            for r in range(8):
+                set_func(start + r, 7, 0)
+        else:  # top-right: separator column to the left
+            for r in range(8):
+                set_func(r, size - 8, 0)
+    for i in range(8, size - 8):
+        set_func(6, i, 1 if i % 2 == 0 else 0)
+        set_func(i, 6, 1 if i % 2 == 0 else 0)
+    align_pat = [[1, 1, 1, 1, 1], [1, 0, 0, 0, 1], [1, 0, 1, 0, 1],
+                 [1, 0, 0, 0, 1], [1, 1, 1, 1, 1]]
+    for r in align:
+        for c in align:
+            if (r <= 8 and c <= 8) or (r <= 8 and c >= size - 9) or (r >= size - 9 and c <= 8):
+                continue
+            for dr in range(-2, 3):
+                for dc in range(-2, 3):
+                    set_func(r + dr, c + dc, align_pat[dr + 2][dc + 2])
+    # Reserve format-info cells and the dark module; values are filled later.
+    for c in range(9):
+        if c != 6:
+            set_func(8, c, 0)
+    for r in range(9):
+        if r != 6:
+            set_func(r, 8, 0)
+    for c in range(8):
+        set_func(8, size - 8 + c, 0)
+    for r in range(7):
+        set_func(size - 7 + r, 8, 0)
+    set_func(4 * version + 9, 8, 1)
+
+    # Data placement, zig-zag from the bottom right.
+    i = 0
+    upward = True
+    col = size - 1
+    while col > 0:
+        if col == 6:
+            col -= 1
+        for vert in range(size):
+            row = size - 1 - vert if upward else vert
+            for j in range(2):
+                cc = col - j
+                if not func[row][cc]:
+                    mat[row][cc] = all_bits[i] if i < len(all_bits) else 0
+                    i += 1
+        upward = not upward
+        col -= 2
+
+    def mask_ok(mask, r, c):
+        if mask == 0:
+            return (r + c) % 2 == 0
+        if mask == 1:
+            return r % 2 == 0
+        if mask == 2:
+            return c % 3 == 0
+        if mask == 3:
+            return (r + c) % 3 == 0
+        if mask == 4:
+            return (r // 2 + c // 3) % 2 == 0
+        if mask == 5:
+            return (r * c) % 2 + (r * c) % 3 == 0
+        if mask == 6:
+            return ((r * c) % 2 + (r * c) % 3) % 2 == 0
+        return ((r + c) % 2 + (r * c) % 3) % 2 == 0
+
+    def penalty(m):
+        score = 0
+        for r in range(size):
+            run = 1
+            for c in range(1, size):
+                if m[r][c] == m[r][c - 1]:
+                    run += 1
+                else:
+                    if run >= 5:
+                        score += 3 + run - 5
+                    run = 1
+            if run >= 5:
+                score += 3 + run - 5
+        for c in range(size):
+            run = 1
+            for r in range(1, size):
+                if m[r][c] == m[r - 1][c]:
+                    run += 1
+                else:
+                    if run >= 5:
+                        score += 3 + run - 5
+                    run = 1
+            if run >= 5:
+                score += 3 + run - 5
+        for r in range(size - 1):
+            for c in range(size - 1):
+                if m[r][c] == m[r + 1][c] == m[r][c + 1] == m[r + 1][c + 1]:
+                    score += 3
+        for line in ([m[r] for r in range(size)] + [[m[r][c] for r in range(size)] for c in range(size)]):
+            for j in range(len(line) - 10):
+                seg = line[j:j + 11]
+                if seg == [1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0] or seg == [0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1]:
+                    score += 40
+        dark = sum(sum(row) for row in m)
+        # floor(|dark% - 50| / 5) * 10, with dark% = dark * 100 / size**2.
+        score += (abs(dark * 20 - size * size * 10) // (size * size)) * 10
+        return score
+
+    best = None
+    for mask in range(8):
+        trial = [row[:] for row in mat]
+        for r in range(size):
+            for c in range(size):
+                if not func[r][c] and mask_ok(mask, r, c):
+                    trial[r][c] ^= 1
+        fmt = _qr_format_bits(mask)
+        # Format info placement (ISO 18004, section 7.9): the vertical
+        # copy beside the top-left finder carries bits 0-7 top to bottom
+        # (skipping the timing row), the horizontal copy carries bits
+        # 14-7 left to right (skipping the timing column), and the two
+        # second copies mirror them at the other finders.
+        for bit, row in enumerate((0, 1, 2, 3, 4, 5, 7, 8)):
+            trial[row][8] = (fmt >> bit) & 1
+        for bit, col in zip(range(7, 15), (8, 7, 5, 4, 3, 2, 1, 0)):
+            trial[8][col] = (fmt >> bit) & 1
+        for bit in range(8):
+            trial[8][size - 1 - bit] = (fmt >> bit) & 1
+        # Bottom-left copy: bits 8-14 only; the cell just above it
+        # (row size-8, column 8) is the dark module, set earlier.
+        for bit in range(8, 15):
+            trial[size - 15 + bit][8] = (fmt >> bit) & 1
+        sc = penalty(trial)
+        if best is None or sc < best[0]:
+            best = (sc, trial)
+    return best[1]
+
+
+def qr_svg(text):
+    mat = _qr_build_matrix(text)
+    size = len(mat)
+    total = size + 8  # 4-module quiet zone on each side
+    parts = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" shape-rendering="crispEdges">' % (total, total),
+             '<rect width="%d" height="%d" fill="white"/>' % (total, total), '<path fill="black" d="']
+    for r in range(size):
+        for c in range(size):
+            if mat[r][c]:
+                parts.append("M%d %dh1v1h-1z" % (c + 4, r + 4))
+    parts.append('"/></svg>')
+    return "".join(parts)
 
 
 class State:
@@ -340,6 +609,24 @@ class Handler(BaseHTTPRequestHandler):
                                    "ips": sorted(STATE.owner_ips, key=lambda x: (not x.startswith("192.168."), x)),
                                    "hostname": socket.gethostname(), "pending": pend,
                                    "devices": sorted(devs, key=lambda d: -d["last_seen"])})
+        if p == "/qr.svg":
+            # Owner-only: the QR just encodes a link the dashboard already
+            # shows, but only generate it for this server's own LAN address.
+            self.require_owner()
+            raw = qp("u")
+            u = urllib.parse.urlsplit(raw)
+            allowed = set(local_ips()) | set(STATE.owner_ips)
+            if (u.scheme != "http" or u.hostname not in allowed or u.port != STATE.port
+                    or u.path not in ("", "/") or u.query or u.fragment or u.username or u.password):
+                raise ValueError("Not a FileBridge address for this device")
+            body = qr_svg(f"http://{u.hostname}:{STATE.port}").encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
 
         # ---- everything below needs access
         if p == "/api/list":
@@ -868,6 +1155,10 @@ ADM_CSS = r"""
 h2{margin:0 0 4px;font-size:15px}.sub{color:var(--muted);font-size:13px;margin:0 0 14px}
 .url{display:flex;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:8px}
 .url code{flex:1;font:600 22px/1.2 ui-monospace,Menlo,Consolas,monospace;color:var(--accent);word-break:break-all}
+.qr{display:flex;gap:14px;align-items:center;margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel2)}
+.qr img{width:150px;height:150px;flex:none;background:#fff;padding:6px;border-radius:8px}
+.qr .qtxt{font-size:13px;color:var(--muted)}
+.qr .qtxt b{display:block;color:var(--text);font-size:14px;margin-bottom:4px}
 .kv{display:flex;gap:8px;align-items:center;margin-top:8px}.kv input{flex:1}
 .list .it{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--line);flex-wrap:wrap}.list .it:first-child{border-top:0}
 .av{width:38px;height:38px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;font-weight:700;color:var(--accent);flex:none;position:relative}
@@ -881,7 +1172,7 @@ ADM_BODY = f"""<div class="topbar">{LOGO}<span class="chip ok">&#9679; Sharing o
 <div class="wrap">
 <div class="hero">
  <div class="card"><h2>Connect from another device</h2><p class="sub">On the same Wi-Fi or office network, open this address in any browser (Android, Windows, Ubuntu, iPhone).</p>
-  <div id="urls"></div><p class="muted" style="margin:6px 0 0;font-size:12px">Device name <b id="host"></b> · port <b id="port"></b></p></div>
+  <div id="urls"></div><div id="qr"></div><p class="muted" style="margin:6px 0 0;font-size:12px">Device name <b id="host"></b> · port <b id="port"></b></p></div>
  <div class="card"><h2>Shared folder</h2><p class="sub">Approved devices only see what's inside this folder.</p>
   <div class="kv"><input id="root" spellcheck="false"><button id="setroot">Change</button></div>
   <h2 style="margin-top:20px">Open someone else's files</h2><p class="sub">If a colleague is running FileBridge too, enter their address.</p>
@@ -903,6 +1194,8 @@ function draw(){
   const urls=S.ips.map(ip=>`http://${ip}:${S.port}`);
   const uh=urls.length?urls.map(u=>`<div class="url"><code>${esc(u)}</code><button data-copy="${esc(u)}">Copy</button></div>`).join(''):'<div class="url"><code style="color:var(--warn);font-size:15px">No network found. Connect to Wi-Fi or LAN.</code></div>';
   if($('#urls').dataset.h!==uh){$('#urls').innerHTML=uh;$('#urls').dataset.h=uh}
+  const qh=urls.length?`<div class="qr"><img alt="QR code for ${esc(urls[0])}" src="/qr.svg?u=${encodeURIComponent(urls[0])}"><div class="qtxt"><b>Scan to connect</b>Point a phone camera at this code to open ${esc(urls[0])} — no typing needed.</div></div>`:'';
+  if($('#qr').dataset.h!==qh){$('#qr').innerHTML=qh;$('#qr').dataset.h=qh}
   if(document.activeElement!==$('#root'))$('#root').value=S.root;
   const sp=JSON.stringify(S.pending.map(r=>[r.id,r.name]));
   if(sp!==sigP){sigP=sp;$('#reqcard').hidden=!S.pending.length;$('#reqn').textContent=S.pending.length;

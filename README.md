@@ -3,7 +3,7 @@
 Share folders on your local network with permission control and a proper file explorer.
 A friendlier replacement for `python3 -m http.server`.
 
-- The sharing device shows its address (IP and port) on a dashboard.
+- The sharing device shows its address (IP and port) on a dashboard, with a QR code for that address so a phone can scan to connect.
 - Anyone on the same network opens that address in a browser and requests access.
 - The owner approves each device and picks what it may do: **View & download**, **View & upload**, or **Full access** (rename and delete too). Access can be changed or removed at any time.
 - Explorer: grid/list view, breadcrumbs, search, sort, thumbnails, previews (images, video, audio, PDF, text/code), drag-and-drop upload of files and folders with progress, folder download as ZIP.
