@@ -54,7 +54,17 @@ assert G("/api/rename", {"path": "New", "name": "Renamed"})[0] == 200
 assert G("/api/delete", {"paths": [""]})[0] == 403
 s, z = G("/api/zip?path=docs")
 assert sorted(zipfile.ZipFile(io.BytesIO(z)).namelist()) == ["docs/a.txt", "docs/sub/b (1).txt", "docs/sub/b.txt"]
+# Transfers menu: downloads are Sends, uploads are Receives, with final status.
+ot = json.loads(O("/api/transfers")[1])["transfers"]
+gt = json.loads(G("/api/transfers")[1])["transfers"]
+assert gt and all(t["device_id"] == dev["id"] for t in gt), gt
+sends = [t for t in ot if t["direction"] == "send" and t["status"] == "sent"]
+recs = [t for t in ot if t["direction"] == "receive" and t["status"] == "received"]
+assert any(t["name"] == "a.txt" and t["size"] == 11 for t in sends), sends
+assert any(t["name"] == "docs.zip" for t in sends), sends
+assert any(t["name"] == "sub/b.txt" and t["size"] == 3 for t in recs), recs
 assert O("/api/admin/revoke", {"id": dev["id"]})[0] == 200
 assert G("/api/list")[0] == 401
+assert G("/api/transfers")[0] == 401
 srv.shutdown()
 print("all API tests passed")
